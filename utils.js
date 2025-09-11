@@ -80,6 +80,77 @@ function obtenerSemanaISO(fecha) {
   return `${year}-W${weekNumber.toString().padStart(2, '0')}`;
 }
 
+/**
+ * Recalcula todos los valores derivados de un reporte
+ * @param {Array} actividades - Lista de actividades a recalcular
+ * @param {Array} manoObra - Lista de personal de mano de obra
+ * @returns {Object} Objeto con los valores recalculados
+ */
+function recalcularReporte(actividades, manoObra) {
+  const resultados = {
+    actividades: [],
+    manoObra: [],
+    totales: {
+      valorTotal: 0,
+      costoTotal: 0,
+      metradoTotal: 0,
+      horasTotal: 0,
+      ganancia: 0,
+      margen: 0
+    }
+  };
+  
+  // Recalcular actividades
+  actividades.forEach((act, idx) => {
+    const metradoE = parseFloat(act.metradoE || 0);
+    const metradoP = parseFloat(act.metradoP || 0);
+    const precio = extraerPrecioUnitario(act);
+    const valorTotal = metradoE * precio;
+    const porcentaje = metradoP > 0 ? (metradoE / metradoP) * 100 : 0;
+    
+    resultados.actividades.push({
+      ...act,
+      numero: idx + 1,
+      metradoE,
+      metradoP,
+      precioUnitario: precio,
+      valorTotal,
+      porcentajeAvance: porcentaje
+    });
+    
+    resultados.totales.valorTotal += valorTotal;
+    resultados.totales.metradoTotal += metradoE;
+  });
+  
+  // Recalcular mano de obra
+  manoObra.forEach((mo, idx) => {
+    const categoria = (mo.categoria || '').toUpperCase();
+    const costoHora = COSTOS_POR_HORA[categoria] || 0;
+    const horas = parseFloat(mo.totalHoras || 0);
+    const costoTotal = horas * costoHora;
+    
+    resultados.manoObra.push({
+      ...mo,
+      item: idx + 1,
+      categoria,
+      costoHora,
+      totalHoras: horas,
+      costoMO: costoTotal
+    });
+    
+    resultados.totales.costoTotal += costoTotal;
+    resultados.totales.horasTotal += horas;
+  });
+  
+  // Calcular ganancia y margen
+  resultados.totales.ganancia = resultados.totales.valorTotal - resultados.totales.costoTotal;
+  resultados.totales.margen = resultados.totales.valorTotal > 0 
+    ? (resultados.totales.ganancia / resultados.totales.valorTotal) * 100 
+    : 0;
+  
+  return resultados;
+}
+
 // Exportamos los módulos para que puedan ser usados en otros archivos.
 module.exports = {
   COSTOS_POR_HORA,
@@ -87,5 +158,6 @@ module.exports = {
   CATEGORIAS_ORDENADAS,
   extraerPrecioUnitario,
   sanitizarId,
-  obtenerSemanaISO
+  obtenerSemanaISO,
+  recalcularReporte
 };
