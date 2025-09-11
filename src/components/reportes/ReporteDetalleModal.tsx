@@ -92,17 +92,53 @@ const ReporteDetalleModal: React.FC<Props> = ({ open, onClose, reporte, activida
   const handleSaveChanges = async () => {
     try {
       setSaving(true);
-      // Por ahora solo enviamos un resumen en dataParcial para rectificación a nivel superior
+      
+      // ✅ ENVIAR DATOS COMPLETOS DE ACTIVIDADES Y MANO DE OBRA
       const dataParcial: any = {
         notasRectificacion: `Ediciones manuales ${new Date().toISOString()}`,
-        // Opcional: incluir contadores para auditoría rápida
         totalActividades: actividadesEdit?.length ?? reporte.totalActividades,
-        totalTrabajadores: manoObraEdit?.length ?? reporte.totalTrabajadores
+        totalTrabajadores: manoObraEdit?.length ?? reporte.totalTrabajadores,
+        
+        // ✅ INCLUIR LAS ACTIVIDADES Y MANO DE OBRA EDITADAS
+        actividades: actividadesEdit.map(act => ({
+          actividad: act.actividad,
+          proceso: act.actividad, // Mapear para compatibilidad
+          ubicacion: act.ubicacion,
+          metradoE: Number(act.metrado ?? act.metrados ?? 0),
+          metradoP: Number(act.metradoP ?? 0),
+          unidad: act.unidad,
+          und: act.unidad, // Mapear para compatibilidad
+          precioUnitario: Number(act.precioUnitario ?? 0),
+          valorTotal: Number(act.valorTotal ?? 0),
+          causas: act.causas,
+          comentarios: act.comentarios,
+        })),
+        
+        manoObra: manoObraEdit.map(mo => ({
+          trabajador: mo.trabajador,
+          nombre: mo.trabajador, // Mapear para compatibilidad
+          dni: mo.dni,
+          categoria: mo.categoria,
+          especificacion: mo.especificacion,
+          totalHoras: Number(mo.totalHoras ?? 0),
+          costoMO: Number(mo.costoMO ?? 0),
+          observacion: mo.observacion,
+          // Si hay horas por actividad, incluirlas
+          horas: mo.horasArray || []
+        }))
       };
-      await corregirYActualizarReporte(reporte.id, dataParcial, false);
+      
+      // ✅ Indicar que queremos regenerar los cálculos
+      await corregirYActualizarReporte(reporte.id, dataParcial, true);
+      
       setEditMode(false);
-      // Opcional: podríamos emitir un evento o refrescar datos externos
-      console.log('Cambios guardados (rectificación solicitada).');
+      
+      // ✅ Recargar datos después de guardar
+      if (window.location.reload) {
+        setTimeout(() => window.location.reload(), 1000);
+      }
+      
+      console.log('Cambios guardados y recalculados correctamente.');
     } catch (e) {
       console.error('Error guardando cambios:', e);
       alert('Hubo un error al guardar los cambios. Revisa la consola para más detalles.');
