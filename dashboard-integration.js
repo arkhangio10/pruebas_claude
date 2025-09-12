@@ -413,9 +413,87 @@ async function limpiarDashboard() {
     }
 }
 
+/**
+ * Versión mejorada para deshacer agregados con datos completos de actividades y mano de obra
+ * Esto mejora la precisión de la reversión
+ */
+async function deshacerAgregadoDashboardCompleto(reporteData, reporteId, actividades, manoObra) {
+    try {
+        console.log(`[Reversión Completa] Iniciando para reporte: ${reporteId}`);
+  
+        const fecha = reporteData.fecha;
+        const fechaObj = new Date(fecha);
+        const periodos = {
+            periodoDiario: fecha,
+            periodoSemanal: obtenerSemanaISO(fechaObj),
+            periodoMensual: fecha.substring(0, 7)
+        };
+  
+        // Consolidar datos originales completos
+        const datosOriginales = consolidarDatosReporte(actividades, manoObra);
+  
+        const batch = db.batch();
+        const factorReversion = -1;
+  
+        // Revertir todas las agregaciones con datos precisos
+        actualizarResumenesGenerales(batch, datosOriginales, periodos, reporteId, factorReversion);
+        actualizarResumenesPorActividad(batch, datosOriginales.actividadesMap, periodos, factorReversion);
+        actualizarResumenesPorTrabajador(batch, datosOriginales.trabajadoresMap, periodos, factorReversion);
+  
+        // Eliminar enlace
+        const linkRef = db.collection('Reportes_Links').doc(reporteId);
+        batch.delete(linkRef);
+  
+        await batch.commit();
+        console.log(`[Reversión Completa] Completada para ${reporteId}`);
+        return { success: true };
+    } catch (error) {
+        console.error(`[Reversión Completa] Error: ${error.message}`);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * Versión mejorada para agregar con datos completos de actividades y mano de obra
+ * Esto permite agregar con mayor precisión al dashboard
+ */
+async function agregarADashboardCompleto(reporteData, reporteId, actividades, manoObra) {
+    try {
+        console.log(`[Agregación Completa] Iniciando para reporte: ${reporteId}`);
+  
+        const fecha = reporteData.fecha;
+        const fechaObj = new Date(fecha);
+        const periodos = {
+            periodoDiario: fecha,
+            periodoSemanal: obtenerSemanaISO(fechaObj),
+            periodoMensual: fecha.substring(0, 7)
+        };
+  
+        // Consolidar datos nuevos
+        const datosNuevos = consolidarDatosReporte(actividades, manoObra);
+  
+        const batch = db.batch();
+  
+        // Agregar todas las agregaciones con datos nuevos
+        actualizarResumenesGenerales(batch, datosNuevos, periodos, reporteId);
+        actualizarResumenesPorActividad(batch, datosNuevos.actividadesMap, periodos);
+        actualizarResumenesPorTrabajador(batch, datosNuevos.trabajadoresMap, periodos);
+        registrarEnlaceReporte(batch, reporteData, reporteId, datosNuevos);
+  
+        await batch.commit();
+        console.log(`[Agregación Completa] Completada para ${reporteId}`);
+        return { success: true };
+    } catch (error) {
+        console.error(`[Agregación Completa] Error: ${error.message}`);
+        return { success: false, error: error.message };
+    }
+}
+
 module.exports = {
     agregarADashboard,
     deshacerAgregadoDashboard,
+    deshacerAgregadoDashboardCompleto,
+    agregarADashboardCompleto,
     limpiarDashboard,
     consolidarDatosReporte,
     obtenerSemanaISO,
