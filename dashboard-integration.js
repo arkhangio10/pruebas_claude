@@ -489,11 +489,88 @@ async function agregarADashboardCompleto(reporteData, reporteId, actividades, ma
     }
 }
 
+/**
+ * Función para recalcular completamente las agregaciones de un reporte
+ * Útil para rectificaciones donde se necesita garantizar consistencia total
+ */
+async function recalcularAgregadosCompletos(reporteId) {
+    console.log(`[Recálculo Completo] Iniciando para reporte ${reporteId}`);
+    
+    try {
+        // 1. Obtener el reporte actualizado con sus subcolecciones
+        const reporteRef = db.collection('Reportes').doc(reporteId);
+        const reporteSnap = await reporteRef.get();
+        
+        if (!reporteSnap.exists) {
+            throw new Error(`Reporte ${reporteId} no encontrado`);
+        }
+        
+        const reporteData = reporteSnap.data();
+        
+        // 2. Obtener las subcolecciones actualizadas
+        const [actividadesSnap, manoObraSnap] = await Promise.all([
+            db.collection(`Reportes/${reporteId}/actividades`).get(),
+            db.collection(`Reportes/${reporteId}/mano_obra`).get()
+        ]);
+        
+        const actividades = actividadesSnap.docs.map(doc => doc.data());
+        const manoObra = manoObraSnap.docs.map(doc => doc.data());
+        
+        // 3. Primero, revertir completamente las contribuciones anteriores
+        console.log('[Recálculo] Paso 1: Revirtiendo agregaciones anteriores...');
+        const reversionResult = await deshacerAgregadoDashboardCompleto(
+            reporteData, 
+            reporteId, 
+            actividades, 
+            manoObra
+        );
+        
+        if (!reversionResult.success) {
+            throw new Error('Fallo al revertir agregaciones anteriores');
+        }
+        
+        // 4. Esperar un momento para asegurar propagación
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // 5. Volver a agregar con los datos actuales
+        console.log('[Recálculo] Paso 2: Aplicando nuevas agregaciones...');
+        const agregacionResult = await agregarADashboardCompleto(
+            reporteData,
+            reporteId,
+            actividades,
+            manoObra
+        );
+        
+        if (!agregacionResult.success) {
+            throw new Error('Fallo al aplicar nuevas agregaciones');
+        }
+        
+        // 6. Actualizar timestamp de última actualización en todas las colecciones afectadas
+        const batch = db.batch();
+        
+        // Marcar el reporte como recalculado
+        batch.update(reporteRef, {
+            ultimoRecalculo: admin.firestore.FieldValue.serverTimestamp(),
+            estadoAgregacion: 'ACTUALIZADO'
+        });
+        
+        await batch.commit();
+        
+        console.log(`[Recálculo Completo] Finalizado exitosamente para ${reporteId}`);
+        return { success: true, reporteId };
+        
+    } catch (error) {
+        console.error(`[Recálculo Completo] Error: ${error.message}`);
+        return { success: false, error: error.message };
+    }
+}
+
 module.exports = {
     agregarADashboard,
     deshacerAgregadoDashboard,
     deshacerAgregadoDashboardCompleto,
     agregarADashboardCompleto,
+    recalcularAgregadosCompletos,
     limpiarDashboard,
     consolidarDatosReporte,
     obtenerSemanaISO,

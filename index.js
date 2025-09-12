@@ -521,13 +521,6 @@ exports.deleteReporte = onCall(async (request) => {
   }
 });
 
-/**
- * Función HTTP callable para rectificar un reporte existente:
- * 1. Revertir sus contribuciones previas (dashboardIntegration.deshacerAgregadoDashboard)
- * 2. Aplicar cambios (dataParcial) sobre el doc principal o subcolecciones (opcional)
- * 3. Regenerar Sheets (opcional) y dashboard ETL
- * 4. Volver a agregar agregados incrementales y re-ingestar en BigQuery
- */
 exports.rectificarReporte = onCall(async (request) => {
   const { reporteId, dataParcial = {}, regenerarSheets = false } = request.data || {};
   if (!reporteId) throw new Error('reporteId es requerido');
@@ -541,167 +534,221 @@ exports.rectificarReporte = onCall(async (request) => {
     if (!docSnap.exists) throw new Error('Reporte no encontrado');
     const originalData = docSnap.data();
 
-    // ✅ PASO 1: CAPTURAR ESTADO ACTUAL COMPLETO ANTES DE CAMBIOS
+    // ✅ PASO 1: OBTENER ESTADO COMPLETO ANTES DE CAMBIOS
     const [actividadesOrigSnap, manoObraOrigSnap] = await Promise.all([
       db.collection(`Reportes/${reporteId}/actividades`).get(),
       db.collection(`Reportes/${reporteId}/mano_obra`).get()
     ]);
     
-    const actividadesOriginales = actividadesOrigSnap.docs.map(d => d.data());
-    const manoObraOriginal = manoObraOrigSnap.docs.map(d => d.data());
+    const actividadesOriginales = actividadesOrigSnap.docs.map(d => ({
+      id: d.id,
+      ...d.data()
+    }));
+    const manoObraOriginal = manoObraOrigSnap.docs.map(d => ({
+      id: d.id,
+      ...d.data()
+    }));
 
-    // ✅ PASO 2: REVERTIR CON DATOS COMPLETOS ORIGINALES
+    // ✅ PASO 2: REVERTIR COMPLETAMENTE CON DATOS ORIGINALES
     if (dashboardIntegration?.deshacerAgregadoDashboardCompleto) {
-      try {
-        // Pasar los datos completos originales para reversión precisa
-        await dashboardIntegration.deshacerAgregadoDashboardCompleto(
-          originalData, 
-          reporteId,
-          actividadesOriginales,
-          manoObraOriginal
-        );
-        console.log('[Rectificación] Agregados previos revertidos completamente');
-      } catch (e) {
-        console.warn('[Rectificación] Falló reversión de agregados:', e.message);
+      console.log('[Rectificación] Revirtiendo agregaciones previas...');
+      const reversionResult = await dashboardIntegration.deshacerAgregadoDashboardCompleto(
+        originalData, 
+        reporteId,
+        actividadesOriginales,
+        manoObraOriginal
+      );
+      
+      if (!reversionResult.success) {
+        console.warn('[Rectificación] Advertencia en reversión:', reversionResult.error);
       }
     }
 
-    // ✅ PASO 3: ACTUALIZAR SUBCOLECCIONES CON RECÁLCULO
+    // ✅ PASO 3: APLICAR CAMBIOS Y RECALCULAR
     const batch = db.batch();
     
     // Borrar colecciones antiguas
-    actividadesOrigSnap.docs.forEach(doc => batch.delete(doc.ref));
-    manoObraOrigSnap.docs.forEach(doc => batch.delete(doc.ref));
+    const deleteBatch = db.batch();
+    actividadesOrigSnap.docs.forEach(doc => deleteBatch.delete(doc.ref));
+    manoObraOrigSnap.docs.forEach(doc => deleteBatch.delete(doc.ref));
+    await deleteBatch.commit();
     
-    // Añadir datos rectificados con recálculo completo
+    // Preparar datos rectificados
     const { recalcularReporte } = require('./utils');
+    const actividadesRectificadas = dataParcial.actividades || actividadesOriginales;
+    const manoObraRectificada = dataParcial.manoObra || manoObraOriginal;
+    
     const datosRecalculados = recalcularReporte(
-      dataParcial.actividades || actividadesOriginales,
-      dataParcial.manoObra || manoObraOriginal
+      actividadesRectificadas,
+      manoObraRectificada
     );
     
     // Guardar actividades recalculadas
     const actividadesRef = db.collection(`Reportes/${reporteId}/actividades`);
-    datosRecalculados.actividades.forEach(actividad => {
+    for (const actividad of datosRecalculados.actividades) {
       const newDocRef = actividadesRef.doc();
       batch.set(newDocRef, {
         ...actividad,
         fechaActualizacion: admin.firestore.FieldValue.serverTimestamp()
       });
-    });
+    }
     
     // Guardar mano de obra recalculada
     const manoObraRef = db.collection(`Reportes/${reporteId}/mano_obra`);
-    datosRecalculados.manoObra.forEach(mo => {
+    for (const mo of datosRecalculados.manoObra) {
       const newDocRef = manoObraRef.doc();
       batch.set(newDocRef, {
         ...mo,
         fechaActualizacion: admin.firestore.FieldValue.serverTimestamp()
       });
-    });
+    }
     
-    // Actualizar documento principal con totales recalculados
+    // Actualizar documento principal
     batch.set(docRef, {
+      ...originalData,
       ...datosRecalculados.totales,
       fechaRectificacion: admin.firestore.FieldValue.serverTimestamp(),
-      estado: 'RECTIFICADO'
+      estado: 'RECTIFICADO',
+      requiereRecalculo: false
     }, { merge: true });
     
     await batch.commit();
     console.log('[Rectificación] Datos actualizados en Firebase');
 
-    // ✅ PASO 4: RE-AGREGAR CON DATOS NUEVOS COMPLETOS
+    // ✅ PASO 4: RE-AGREGAR CON DATOS NUEVOS
     if (dashboardIntegration?.agregarADashboardCompleto) {
-      try {
-        await dashboardIntegration.agregarADashboardCompleto(
-          { ...originalData, ...datosRecalculados.totales },
-          reporteId,
-          datosRecalculados.actividades,
-          datosRecalculados.manoObra
-        );
-        console.log('[Rectificación] Datos rectificados agregados completamente');
-      } catch (e) {
-        console.warn('[Rectificación] Error agregando resumen completo:', e.message);
+      console.log('[Rectificación] Aplicando nuevas agregaciones...');
+      const agregacionResult = await dashboardIntegration.agregarADashboardCompleto(
+        { ...originalData, ...datosRecalculados.totales },
+        reporteId,
+        datosRecalculados.actividades,
+        datosRecalculados.manoObra
+      );
+      
+      if (!agregacionResult.success) {
+        console.error('[Rectificación] Error en agregación:', agregacionResult.error);
       }
     }
     
-    // ✅ PASO 5: INVALIDAR CACHÉ EN TIEMPO REAL
-    await db.collection('CacheInvalidation').doc('latest').set({
+    // ✅ PASO 5: FORZAR RECÁLCULO DE TODAS LAS COLECCIONES RELACIONADAS
+    await recalcularColeccionesRelacionadas(reporteId, originalData.fecha);
+    
+    // ✅ PASO 6: INVALIDAR TODOS LOS CACHÉS
+    const cacheInvalidationBatch = db.batch();
+    
+    // Invalidar caché principal
+    cacheInvalidationBatch.set(db.collection('CacheInvalidation').doc('latest'), {
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
       reporteId,
-      action: 'rectification'
+      action: 'rectification_complete',
+      affectedCollections: [
+        'Dashboard_Resumenes',
+        'Actividades_Resumen', 
+        'Trabajadores_Resumen',
+        'Reportes_Links'
+      ]
     });
     
-    // 6. Regenerar Google Sheets si se solicita
-    let nuevoSheetId = null;
-    if (regenerarSheets) {
-      try {
-        const refreshedDocSnap = await docRef.get();
-        const mergedData = refreshedDocSnap.data();
-        const sheetRes = await sheetsHelper.generarReporteCompletoEnSheets(reporteId, mergedData);
-        if (sheetRes.success) {
-          nuevoSheetId = sheetRes.spreadsheetId;
-          await docRef.update({ spreadsheetId: nuevoSheetId });
-          console.log('[Rectificación] Reporte en Google Sheets regenerado');
-        }
-      } catch (e) {
-        console.warn('[Rectificación] Error regenerando Google Sheets:', e.message);
-      }
-    }
-    
-    // 7. Re-ingestar en BigQuery con datos corregidos
-    let bqIngested = false;
-    if (enviarReporteDetalladoABigQuery) {
-      try {
-        const [actsSnap, moSnap] = await Promise.all([
-          db.collection(`Reportes/${reporteId}/actividades`).get(),
-          db.collection(`Reportes/${reporteId}/mano_obra`).get()
-        ]);
-        
-        const refreshedDocSnap = await docRef.get();
-        const currentData = refreshedDocSnap.data();
-        
-        await enviarReporteDetalladoABigQuery(
-          { id: reporteId, ...currentData }, 
-          actsSnap.docs.map(d => ({ id: d.id, ...d.data() })),
-          moSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+    // Invalidar caché por periodo
+    const fecha = originalData.fecha;
+    if (fecha) {
+      const { obtenerSemanaISO } = require('./utils');
+      const periodos = {
+        diario: fecha,
+        semanal: obtenerSemanaISO(new Date(fecha)),
+        mensual: fecha.substring(0, 7)
+      };
+      
+      for (const [tipo, periodo] of Object.entries(periodos)) {
+        cacheInvalidationBatch.set(
+          db.collection('CacheInvalidation').doc(`${tipo}_${periodo}`),
+          {
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            reporteId,
+            tipo,
+            periodo,
+            action: 'period_invalidation'
+          }
         );
-        bqIngested = true;
-        console.log('[Rectificación] Datos corregidos enviados a BigQuery');
-      } catch (e) {
-        console.warn('[Rectificación] Error re-ingestando BigQuery:', e.message);
       }
     }
     
-    // 8. Actualizar estado final
+    await cacheInvalidationBatch.commit();
+    
+    // 7. Regenerar Sheets si se solicita
+    if (regenerarSheets) {
+      const sheetRes = await sheetsHelper.generarReporteCompletoEnSheets(reporteId, {
+        ...originalData,
+        ...datosRecalculados.totales
+      });
+      if (sheetRes.success) {
+        await docRef.update({ spreadsheetId: sheetRes.spreadsheetId });
+      }
+    }
+    
+    // 8. Re-ingestar en BigQuery
+    if (enviarReporteDetalladoABigQuery) {
+      await enviarReporteDetalladoABigQuery(
+        { id: reporteId, ...originalData, ...datosRecalculados.totales },
+        datosRecalculados.actividades,
+        datosRecalculados.manoObra
+      );
+    }
+    
+    // 9. Actualizar estado final
     await docRef.update({
       estado: 'COMPLETADO',
       fechaRectificacionFinal: admin.firestore.FieldValue.serverTimestamp(),
-      bigQueryIngested: bqIngested || false
+      agregacionesActualizadas: true
     });
     
     console.log(`[Rectificación] Proceso completado exitosamente para ${reporteId}`);
     
     return {
       success: true,
-      mensaje: 'Reporte rectificado correctamente',
+      mensaje: 'Reporte rectificado y agregaciones actualizadas correctamente',
       totales: datosRecalculados.totales,
-      sheetsId: nuevoSheetId,
-      bigQueryIngested: bqIngested
+      agregacionesActualizadas: true
     };
+    
   } catch (error) {
     console.error('[Rectificación] Error:', error);
-    
-    // Marcar el reporte con error
     await db.collection('Reportes').doc(reporteId).update({
       estado: 'ERROR_RECTIFICACION',
       errorRectificacion: error.message,
       fechaErrorRectificacion: admin.firestore.FieldValue.serverTimestamp()
     });
-    
     throw new Error('Error rectificando reporte: ' + error.message);
   }
 });
+
+// Función auxiliar para recalcular colecciones relacionadas
+async function recalcularColeccionesRelacionadas(reporteId, fecha) {
+  if (!fecha) return;
+  
+  const db = admin.firestore();
+  const batch = db.batch();
+  
+  // Marcar los documentos de resumen para recálculo
+  const { obtenerSemanaISO } = require('./utils');
+  const periodos = {
+    diario: `diario_${fecha}`,
+    semanal: `semanal_${obtenerSemanaISO(new Date(fecha))}`,
+    mensual: `mensual_${fecha.substring(0, 7)}`
+  };
+  
+  for (const [tipo, docId] of Object.entries(periodos)) {
+    const docRef = db.collection('Dashboard_Resumenes').doc(docId);
+    batch.set(docRef, {
+      requiereRecalculo: true,
+      ultimaModificacion: admin.firestore.FieldValue.serverTimestamp(),
+      reportesModificados: admin.firestore.FieldValue.arrayUnion(reporteId)
+    }, { merge: true });
+  }
+  
+  await batch.commit();
+  console.log(`[Recálculo] Marcadas colecciones para recálculo: ${Object.values(periodos).join(', ')}`);
+}
 
 // ============================================================================
 // NUEVAS FUNCIONES HTTP PARA SISTEMA COMPLETO
