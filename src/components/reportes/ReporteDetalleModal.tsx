@@ -6,6 +6,7 @@ type DetalleActividad = {
   actividad?: string;
   metrados?: string | number;
   metrado?: string | number;
+  metradoP?: string | number;
   precioUnitario?: number;
   valorTotal?: number;
   causas?: string;
@@ -93,69 +94,57 @@ const ReporteDetalleModal: React.FC<Props> = ({ open, onClose, reporte, activida
     try {
       setSaving(true);
       
-      // ✅ ENVIAR DATOS COMPLETOS DE ACTIVIDADES Y MANO DE OBRA
       const dataParcial: any = {
         notasRectificacion: `Ediciones manuales ${new Date().toISOString()}`,
-        totalActividades: actividadesEdit?.length ?? reporte.totalActividades,
-        totalTrabajadores: manoObraEdit?.length ?? reporte.totalTrabajadores,
+        totalActividades: actividadesEdit?.length,
+        totalTrabajadores: manoObraEdit?.length,
         
-        // ✅ INCLUIR LAS ACTIVIDADES Y MANO DE OBRA EDITADAS
+        // Datos completos de actividades y mano de obra
         actividades: actividadesEdit.map(act => ({
-          actividad: act.actividad,
-          proceso: act.actividad, // Mapear para compatibilidad
-          ubicacion: act.ubicacion,
+          ...act,
+          proceso: act.actividad,
           metradoE: Number(act.metrado ?? act.metrados ?? 0),
           metradoP: Number(act.metradoP ?? 0),
-          unidad: act.unidad,
-          und: act.unidad, // Mapear para compatibilidad
           precioUnitario: Number(act.precioUnitario ?? 0),
-          valorTotal: Number(act.valorTotal ?? 0),
-          causas: act.causas,
-          comentarios: act.comentarios,
+          valorTotal: Number(act.valorTotal ?? 0)
         })),
         
         manoObra: manoObraEdit.map(mo => ({
-          trabajador: mo.trabajador,
-          nombre: mo.trabajador, // Mapear para compatibilidad
-          dni: mo.dni,
-          categoria: mo.categoria,
-          especificacion: mo.especificacion,
+          ...mo,
+          nombre: mo.trabajador,
           totalHoras: Number(mo.totalHoras ?? 0),
           costoMO: Number(mo.costoMO ?? 0),
-          observacion: mo.observacion,
-          // Si hay horas por actividad, incluirlas
           horas: mo.horasArray || []
         }))
       };
       
-      // ✅ Indicar que queremos regenerar los cálculos
       await corregirYActualizarReporte(reporte.id, dataParcial, true);
       
       setEditMode(false);
       
-      // ✅ INVALIDAR TODO EL CACHÉ
+      // Limpiar TODO el caché local
       if (typeof window !== 'undefined') {
-        // Limpiar caché de localStorage
-        Object.keys(localStorage).forEach(key => {
-          if (key.startsWith('costos:') || 
-              key.startsWith('productividad:') || 
-              key.startsWith('trabajadores:') ||
-              key.startsWith('reportes:') ||
-              key.startsWith('dashboard:')) {
-            localStorage.removeItem(key);
-          }
-        });
+        const cacheKeys = Object.keys(localStorage).filter(key => 
+          key.includes('costos:') || 
+          key.includes('productividad:') || 
+          key.includes('trabajadores:') ||
+          key.includes('reportes:') ||
+          key.includes('dashboard:') ||
+          key.includes('resumen:')
+        );
         
-        // Forzar recarga completa de la página
+        cacheKeys.forEach(key => localStorage.removeItem(key));
+        
+        // Forzar recarga completa después de un pequeño delay
         setTimeout(() => {
           window.location.reload();
-        }, 1000);
+        }, 1500);
       }
       
-      console.log('Cambios guardados y recalculados correctamente.');
+      alert('Cambios guardados y agregaciones actualizadas correctamente');
     } catch (e) {
       console.error('Error guardando cambios:', e);
-      alert('Hubo un error al guardar los cambios. Revisa la consola para más detalles.');
+      alert('Error al guardar. Ver consola para detalles.');
     } finally {
       setSaving(false);
     }
