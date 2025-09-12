@@ -133,9 +133,23 @@ const ReporteDetalleModal: React.FC<Props> = ({ open, onClose, reporte, activida
       
       setEditMode(false);
       
-      // ✅ Recargar datos después de guardar
-      if (window.location.reload) {
-        setTimeout(() => window.location.reload(), 1000);
+      // ✅ INVALIDAR TODO EL CACHÉ
+      if (typeof window !== 'undefined') {
+        // Limpiar caché de localStorage
+        Object.keys(localStorage).forEach(key => {
+          if (key.startsWith('costos:') || 
+              key.startsWith('productividad:') || 
+              key.startsWith('trabajadores:') ||
+              key.startsWith('reportes:') ||
+              key.startsWith('dashboard:')) {
+            localStorage.removeItem(key);
+          }
+        });
+        
+        // Forzar recarga completa de la página
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
       }
       
       console.log('Cambios guardados y recalculados correctamente.');
