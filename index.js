@@ -526,189 +526,120 @@ exports.rectificarReporte = onCall(async (request) => {
   if (!reporteId) throw new Error('reporteId es requerido');
   
   const db = admin.firestore();
-  console.log(`[Rectificación] Iniciando rectificación completa para ${reporteId}`);
+  console.log(`[Rectificación] Iniciando rectificación para ${reporteId}`);
   
   try {
+    // 1. Obtener documento original
     const docRef = db.collection('Reportes').doc(reporteId);
     const docSnap = await docRef.get();
     if (!docSnap.exists) throw new Error('Reporte no encontrado');
     const originalData = docSnap.data();
 
-    // ✅ PASO 1: OBTENER ESTADO COMPLETO ANTES DE CAMBIOS
+    // 2. Obtener datos actuales de subcolecciones
     const [actividadesOrigSnap, manoObraOrigSnap] = await Promise.all([
       db.collection(`Reportes/${reporteId}/actividades`).get(),
       db.collection(`Reportes/${reporteId}/mano_obra`).get()
     ]);
     
-    const actividadesOriginales = actividadesOrigSnap.docs.map(d => ({
-      id: d.id,
-      ...d.data()
-    }));
-    const manoObraOriginal = manoObraOrigSnap.docs.map(d => ({
-      id: d.id,
-      ...d.data()
-    }));
-
-    // ✅ PASO 2: REVERTIR COMPLETAMENTE CON DATOS ORIGINALES
+    // 3. REVERTIR agregaciones con datos originales
+    console.log('[Rectificación] Paso 1: Revirtiendo agregaciones previas...');
     if (dashboardIntegration?.deshacerAgregadoDashboardCompleto) {
-      console.log('[Rectificación] Revirtiendo agregaciones previas...');
-      const reversionResult = await dashboardIntegration.deshacerAgregadoDashboardCompleto(
+      const actividadesOriginales = actividadesOrigSnap.docs.map(d => d.data());
+      const manoObraOriginal = manoObraOrigSnap.docs.map(d => d.data());
+      
+      await dashboardIntegration.deshacerAgregadoDashboardCompleto(
         originalData, 
         reporteId,
         actividadesOriginales,
         manoObraOriginal
       );
-      
-      if (!reversionResult.success) {
-        console.warn('[Rectificación] Advertencia en reversión:', reversionResult.error);
-      }
     }
 
-    // ✅ PASO 3: APLICAR CAMBIOS Y RECALCULAR
+    // 4. Aplicar cambios SOLO a metradoE y horas
+    console.log('[Rectificación] Paso 2: Aplicando cambios...');
     const batch = db.batch();
     
-    // Borrar colecciones antiguas
-    const deleteBatch = db.batch();
-    actividadesOrigSnap.docs.forEach(doc => deleteBatch.delete(doc.ref));
-    manoObraOrigSnap.docs.forEach(doc => deleteBatch.delete(doc.ref));
-    await deleteBatch.commit();
+    // Import COSTOS_POR_HORA
+    const { COSTOS_POR_HORA } = require('./utils');
     
-    // Preparar datos rectificados
-    const { recalcularReporte } = require('./utils');
-    const actividadesRectificadas = dataParcial.actividades || actividadesOriginales;
-    const manoObraRectificada = dataParcial.manoObra || manoObraOriginal;
-    
-    const datosRecalculados = recalcularReporte(
-      actividadesRectificadas,
-      manoObraRectificada
-    );
-    
-    // Guardar actividades recalculadas
-    const actividadesRef = db.collection(`Reportes/${reporteId}/actividades`);
-    for (const actividad of datosRecalculados.actividades) {
-      const newDocRef = actividadesRef.doc();
-      batch.set(newDocRef, {
-        ...actividad,
-        fechaActualizacion: admin.firestore.FieldValue.serverTimestamp()
-      });
+    // Actualizar actividades (solo metradoE)
+    if (dataParcial.actividades) {
+      for (let i = 0; i < dataParcial.actividades.length; i++) {
+        const actNueva = dataParcial.actividades[i];
+        const docOriginal = actividadesOrigSnap.docs[i];
+        
+        if (docOriginal) {
+          const dataOriginal = docOriginal.data();
+          const metradoE = Number(actNueva.metradoE || 0);
+          const precio = Number(dataOriginal.precio || actNueva.precio || 0);
+          
+          batch.update(docOriginal.ref, {
+            metradoE: metradoE,
+            valorTotal: metradoE * precio,
+            fechaActualizacion: admin.firestore.FieldValue.serverTimestamp()
+          });
+        }
+      }
     }
     
-    // Guardar mano de obra recalculada
-    const manoObraRef = db.collection(`Reportes/${reporteId}/mano_obra`);
-    for (const mo of datosRecalculados.manoObra) {
-      const newDocRef = manoObraRef.doc();
-      batch.set(newDocRef, {
-        ...mo,
-        fechaActualizacion: admin.firestore.FieldValue.serverTimestamp()
-      });
+    // Actualizar mano de obra (solo horas)
+    if (dataParcial.manoObra) {
+      for (let i = 0; i < dataParcial.manoObra.length; i++) {
+        const moNueva = dataParcial.manoObra[i];
+        const docOriginal = manoObraOrigSnap.docs[i];
+        
+        if (docOriginal && moNueva.horas) {
+          const dataOriginal = docOriginal.data();
+          const categoria = (dataOriginal.categoria || '').toUpperCase();
+          const costoHora = COSTOS_POR_HORA[categoria] || 0;
+          const totalHoras = moNueva.horas.reduce((sum, h) => sum + Number(h || 0), 0);
+          
+          batch.update(docOriginal.ref, {
+            horas: moNueva.horas,
+            totalHoras: totalHoras,
+            costoMO: totalHoras * costoHora,
+            fechaActualizacion: admin.firestore.FieldValue.serverTimestamp()
+          });
+        }
+      }
     }
-    
-    // Actualizar documento principal
-    batch.set(docRef, {
-      ...originalData,
-      ...datosRecalculados.totales,
-      fechaRectificacion: admin.firestore.FieldValue.serverTimestamp(),
-      estado: 'RECTIFICADO',
-      requiereRecalculo: false
-    }, { merge: true });
     
     await batch.commit();
-    console.log('[Rectificación] Datos actualizados en Firebase');
+    console.log('[Rectificación] Cambios aplicados en Firebase');
 
-    // ✅ PASO 4: RE-AGREGAR CON DATOS NUEVOS
+    // 5. Obtener datos actualizados para re-agregar
+    const [actividadesNuevasSnap, manoObraNuevaSnap] = await Promise.all([
+      db.collection(`Reportes/${reporteId}/actividades`).get(),
+      db.collection(`Reportes/${reporteId}/mano_obra`).get()
+    ]);
+    
+    const actividadesNuevas = actividadesNuevasSnap.docs.map(d => d.data());
+    const manoObraNueva = manoObraNuevaSnap.docs.map(d => d.data());
+    
+    // 6. Re-agregar con datos actualizados
+    console.log('[Rectificación] Paso 3: Re-agregando con datos actualizados...');
     if (dashboardIntegration?.agregarADashboardCompleto) {
-      console.log('[Rectificación] Aplicando nuevas agregaciones...');
-      const agregacionResult = await dashboardIntegration.agregarADashboardCompleto(
-        { ...originalData, ...datosRecalculados.totales },
+      await dashboardIntegration.agregarADashboardCompleto(
+        originalData,
         reporteId,
-        datosRecalculados.actividades,
-        datosRecalculados.manoObra
-      );
-      
-      if (!agregacionResult.success) {
-        console.error('[Rectificación] Error en agregación:', agregacionResult.error);
-      }
-    }
-    
-    // ✅ PASO 5: FORZAR RECÁLCULO DE TODAS LAS COLECCIONES RELACIONADAS
-    await recalcularColeccionesRelacionadas(reporteId, originalData.fecha);
-    
-    // ✅ PASO 6: INVALIDAR TODOS LOS CACHÉS
-    const cacheInvalidationBatch = db.batch();
-    
-    // Invalidar caché principal
-    cacheInvalidationBatch.set(db.collection('CacheInvalidation').doc('latest'), {
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      reporteId,
-      action: 'rectification_complete',
-      affectedCollections: [
-        'Dashboard_Resumenes',
-        'Actividades_Resumen', 
-        'Trabajadores_Resumen',
-        'Reportes_Links'
-      ]
-    });
-    
-    // Invalidar caché por periodo
-    const fecha = originalData.fecha;
-    if (fecha) {
-      const { obtenerSemanaISO } = require('./utils');
-      const periodos = {
-        diario: fecha,
-        semanal: obtenerSemanaISO(new Date(fecha)),
-        mensual: fecha.substring(0, 7)
-      };
-      
-      for (const [tipo, periodo] of Object.entries(periodos)) {
-        cacheInvalidationBatch.set(
-          db.collection('CacheInvalidation').doc(`${tipo}_${periodo}`),
-          {
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            reporteId,
-            tipo,
-            periodo,
-            action: 'period_invalidation'
-          }
-        );
-      }
-    }
-    
-    await cacheInvalidationBatch.commit();
-    
-    // 7. Regenerar Sheets si se solicita
-    if (regenerarSheets) {
-      const sheetRes = await sheetsHelper.generarReporteCompletoEnSheets(reporteId, {
-        ...originalData,
-        ...datosRecalculados.totales
-      });
-      if (sheetRes.success) {
-        await docRef.update({ spreadsheetId: sheetRes.spreadsheetId });
-      }
-    }
-    
-    // 8. Re-ingestar en BigQuery
-    if (enviarReporteDetalladoABigQuery) {
-      await enviarReporteDetalladoABigQuery(
-        { id: reporteId, ...originalData, ...datosRecalculados.totales },
-        datosRecalculados.actividades,
-        datosRecalculados.manoObra
+        actividadesNuevas,
+        manoObraNueva
       );
     }
     
-    // 9. Actualizar estado final
+    // 7. Actualizar documento principal
     await docRef.update({
-      estado: 'COMPLETADO',
-      fechaRectificacionFinal: admin.firestore.FieldValue.serverTimestamp(),
-      agregacionesActualizadas: true
+      estado: 'RECTIFICADO',
+      fechaRectificacion: admin.firestore.FieldValue.serverTimestamp(),
+      notasRectificacion: dataParcial.notasRectificacion || 'Corrección de metrados y horas'
     });
     
-    console.log(`[Rectificación] Proceso completado exitosamente para ${reporteId}`);
+    console.log(`[Rectificación] Completada exitosamente para ${reporteId}`);
     
     return {
       success: true,
-      mensaje: 'Reporte rectificado y agregaciones actualizadas correctamente',
-      totales: datosRecalculados.totales,
-      agregacionesActualizadas: true
+      mensaje: 'Reporte rectificado correctamente',
+      reporteId: reporteId
     };
     
   } catch (error) {
@@ -716,9 +647,9 @@ exports.rectificarReporte = onCall(async (request) => {
     await db.collection('Reportes').doc(reporteId).update({
       estado: 'ERROR_RECTIFICACION',
       errorRectificacion: error.message,
-      fechaErrorRectificacion: admin.firestore.FieldValue.serverTimestamp()
+      fechaError: admin.firestore.FieldValue.serverTimestamp()
     });
-    throw new Error('Error rectificando reporte: ' + error.message);
+    throw new Error('Error rectificando: ' + error.message);
   }
 });
 

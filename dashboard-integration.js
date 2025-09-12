@@ -50,15 +50,39 @@ function pathTrabajador(periodoTipo, periodoValor, campo) {
 // Consolidación de datos de un reporte
 // ----------------------------------------------------------
 function consolidarDatosReporte(actividades, manoObra) {
+    // NUEVA VALIDACIÓN ESTRICTA
+    console.log('[Consolidación] Iniciando con:', {
+        numActividades: actividades?.length,
+        numManoObra: manoObra?.length
+    });
+    
+    if (!Array.isArray(actividades) || !Array.isArray(manoObra)) {
+        throw new Error('Datos de actividades o mano de obra no son arrays válidos.');
+    }
+    
+    // Validar estructura de horas
+    let horasValidas = true;
+    manoObra.forEach((trab, idx) => {
+        if (!trab.horas) {
+            console.warn(`[Consolidación] Trabajador ${idx} sin horas, creando array vacío`);
+            trab.horas = new Array(actividades.length).fill(0);
+        } else if (!Array.isArray(trab.horas)) {
+            console.error(`[Consolidación] Trabajador ${idx} con horas inválidas:`, trab.horas);
+            horasValidas = false;
+        } else if (trab.horas.length !== actividades.length) {
+            console.warn(`[Consolidación] Trabajador ${idx}: ${trab.horas.length} horas vs ${actividades.length} actividades`);
+        }
+    });
+    
+    if (!horasValidas) {
+        throw new Error('Estructura de horas inválida en mano de obra');
+    }
+
     const actividadesMap = new Map();
     const trabajadoresMap = new Map();
     let costoTotalReporte = 0;
     let valorTotalReporte = 0;
     let horasTotalesReporte = 0;
-
-    if (!Array.isArray(actividades) || !Array.isArray(manoObra)) {
-        throw new Error('Datos de actividades o mano de obra no son arrays válidos.');
-    }
 
     manoObra.forEach(trab => {
         if (Array.isArray(trab.horas) && trab.horas.length !== actividades.length) {
@@ -460,6 +484,31 @@ async function deshacerAgregadoDashboardCompleto(reporteData, reporteId, activid
 async function agregarADashboardCompleto(reporteData, reporteId, actividades, manoObra) {
     try {
         console.log(`[Agregación Completa] Iniciando para reporte: ${reporteId}`);
+        console.log('[Agregación Completa] Datos recibidos:', {
+            reporteId,
+            fecha: reporteData.fecha,
+            numActividades: actividades?.length,
+            numTrabajadores: manoObra?.length,
+            primeraActividad: {
+                proceso: actividades?.[0]?.proceso,
+                metradoE: actividades?.[0]?.metradoE,
+                precio: actividades?.[0]?.precio
+            },
+            primerTrabajador: {
+                nombre: manoObra?.[0]?.trabajador,
+                horas: manoObra?.[0]?.horas?.length,
+                categoria: manoObra?.[0]?.categoria
+            }
+        });
+        
+        // VALIDACIÓN DE ESTRUCTURA
+        if (!actividades || !Array.isArray(actividades)) {
+            throw new Error('Actividades inválidas o faltantes');
+        }
+        
+        if (!manoObra || !Array.isArray(manoObra)) {
+            throw new Error('Mano de obra inválida o faltante');
+        }
   
         const fecha = reporteData.fecha;
         const fechaObj = new Date(fecha);
@@ -484,7 +533,15 @@ async function agregarADashboardCompleto(reporteData, reporteId, actividades, ma
         console.log(`[Agregación Completa] Completada para ${reporteId}`);
         return { success: true };
     } catch (error) {
-        console.error(`[Agregación Completa] Error: ${error.message}`);
+        console.error(`[Agregación Completa] Error detallado:`, {
+            mensaje: error.message,
+            stack: error.stack,
+            reporteId,
+            datosRecibidos: {
+                actividades: actividades?.length,
+                manoObra: manoObra?.length
+            }
+        });
         return { success: false, error: error.message };
     }
 }

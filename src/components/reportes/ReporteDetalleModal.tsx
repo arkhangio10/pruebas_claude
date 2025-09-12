@@ -2,6 +2,14 @@
 import React from 'react';
 import { corregirYActualizarReporte } from '@/services/reportesService';
 
+// Constantes de costos
+const COSTOS_POR_HORA = {
+  'OPERARIO': 23.00,
+  'OFICIAL': 18.09,
+  'PEON': 16.38,
+  'SIN CATEGORÍA': 0
+} as const;
+
 type DetalleActividad = {
   actividad?: string;
   metrados?: string | number;
@@ -23,6 +31,37 @@ type DetalleMO = {
   horasArray?: string[];
   item?: number | string;
   observacion?: string;
+};
+
+// Función de validación
+const validarDatosAntesSave = (actividades: any[], manoObra: any[]): boolean => {
+  // Validar actividades - solo validar si tienen un valor y es negativo
+  for (const act of actividades) {
+    // No forzar validación de metrados si no se han modificado
+    const metradoValue = act.metradoE || act.metrado || act.metrados;
+    if (metradoValue !== undefined && metradoValue !== '' && Number(metradoValue) < 0) {
+      alert(`Error: Metrado ejecutado inválido en actividad ${act.actividad}`);
+      return false;
+    }
+  }
+  
+  // Validar mano de obra
+  for (const mo of manoObra) {
+    // Si no hay horasArray, inicializar como array vacío para permitir guardar
+    if (!Array.isArray(mo.horasArray)) {
+      mo.horasArray = new Array(actividades.length).fill('0');
+    }
+    
+    // Validar cada hora
+    for (const h of mo.horasArray) {
+      if (h && (isNaN(Number(h)) || Number(h) < 0 || Number(h) > 24)) {
+        alert(`Error: Horas inválidas (${h}) para ${mo.trabajador}`);
+        return false;
+      }
+    }
+  }
+  
+  return true;
 };
 
 export interface ReporteDetalleData {
@@ -55,6 +94,7 @@ const ReporteDetalleModal: React.FC<Props> = ({ open, onClose, reporte, activida
 
   const [editMode, setEditMode] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  const [editingHours, setEditingHours] = React.useState(false);
   const [actividadesEdit, setActividadesEdit] = React.useState(actividades);
   const [manoObraEdit, setManoObraEdit] = React.useState(manoObra);
 
@@ -62,36 +102,110 @@ const ReporteDetalleModal: React.FC<Props> = ({ open, onClose, reporte, activida
     // Al abrir/cambiar de reporte, resetear estado de edición
     if (open && reporte?.id) {
       setEditMode(false);
+      setEditingHours(false);
       setActividadesEdit(actividades);
       setManoObraEdit(manoObra);
     }
   }, [open, reporte?.id, actividades, manoObra]);
 
   const handleActividadChange = (idx: number, field: string, value: string) => {
+    // SOLO permitir editar metradoE
+    if (field !== 'metradoE') {
+      return; // Ignorar cualquier otro cambio
+    }
+    
     setActividadesEdit(prev => {
       const next = [...prev];
       const current = { ...next[idx] } as any;
-      // Campos numéricos comunes
-      const numericFields = new Set(['metrado', 'metradoP', 'valorTotal']);
-      current[field] = numericFields.has(field) ? (value === '' ? undefined : Number(value)) : value;
+      
+      // Actualizar el metrado ejecutado
+      const valorNumerico = value === '' ? 0 : Number(value);
+      current.metradoE = valorNumerico;
+      current.metrado = valorNumerico; // Sincronizar ambos campos
+      
+      // Recalcular valor total automáticamente (siempre calculado, nunca editable directamente)
+      const precio = Number(current.precioUnitario || 0);
+      current.valorTotal = valorNumerico * precio;
+      
       next[idx] = current;
       return next;
     });
   };
 
+  // Mantener handleMOChange para compatibilidad con la UI existente
   const handleMOChange = (idx: number, field: string, value: string) => {
     setManoObraEdit(prev => {
       const next = [...prev];
       const current = { ...next[idx] } as any;
-      const numericFields = new Set(['totalHoras', 'costoMO']);
-      current[field] = numericFields.has(field) ? (value === '' ? undefined : Number(value)) : value;
+      
+      if (field === 'categoria') {
+        // Si cambia la categoría, actualizar el valor y recalcular costo
+        current.categoria = value;
+        
+        // Recalcular costo MO basado en categoría
+        const categoria = (value || '').toUpperCase();
+        const costoHora = COSTOS_POR_HORA[categoria as keyof typeof COSTOS_POR_HORA] || 0;
+        current.costoMO = (current.totalHoras || 0) * costoHora;
+      } else if (field === 'totalHoras') {
+        // Si cambian las horas totales directamente
+        const horas = value === '' ? 0 : Number(value);
+        current.totalHoras = horas;
+        
+        // Recalcular costo MO
+        const categoria = (current.categoria || '').toUpperCase();
+        const costoHora = COSTOS_POR_HORA[categoria as keyof typeof COSTOS_POR_HORA] || 0;
+        current.costoMO = horas * costoHora;
+      } else {
+        // Para otros campos (trabajador, dni, especificacion, observacion)
+        current[field] = value;
+      }
+      
       next[idx] = current;
+      return next;
+    });
+  };
+  
+  const handleHorasActividad = (trabIdx: number, actIdx: number, value: string) => {
+    // Marcar que estamos editando horas
+    if (!editingHours) {
+      setEditingHours(true);
+    }
+    
+    setManoObraEdit(prev => {
+      const next = [...prev];
+      const current = { ...next[trabIdx] } as any;
+      
+      // Inicializar array de horas si no existe
+      if (!Array.isArray(current.horasArray)) {
+        current.horasArray = new Array(actividadesEdit.length).fill('0');
+      }
+      
+      // Actualizar horas para esta actividad específica
+      current.horasArray[actIdx] = value === '' ? '0' : value;
+      
+      // Recalcular total de horas
+      const totalHoras = current.horasArray.reduce((sum: number, h: string) => 
+        sum + (parseFloat(h) || 0), 0
+      );
+      current.totalHoras = totalHoras;
+      
+      // Recalcular costo MO basado en categoría
+      const categoria = (current.categoria || '').toUpperCase();
+      const costoHora = COSTOS_POR_HORA[categoria as keyof typeof COSTOS_POR_HORA] || 0;
+      current.costoMO = totalHoras * costoHora;
+      
+      next[trabIdx] = current;
       return next;
     });
   };
 
   const handleSaveChanges = async () => {
     try {
+      // Validar datos antes de guardar
+      if (!validarDatosAntesSave(actividadesEdit, manoObraEdit)) {
+        return; // Detener si la validación falla
+      }
+      
       setSaving(true);
       
       const dataParcial: any = {
@@ -121,6 +235,7 @@ const ReporteDetalleModal: React.FC<Props> = ({ open, onClose, reporte, activida
       await corregirYActualizarReporte(reporte.id, dataParcial, true);
       
       setEditMode(false);
+      setEditingHours(false);
       
       // Limpiar TODO el caché local
       if (typeof window !== 'undefined') {
@@ -221,7 +336,18 @@ const ReporteDetalleModal: React.FC<Props> = ({ open, onClose, reporte, activida
         </div>
 
         <div className="p-4">
-          <h4 className="font-medium mb-2">Actividades Detalladas</h4>
+          <div className="flex justify-between items-center mb-2">
+            <h4 className="font-medium">Actividades Detalladas</h4>
+            {editMode && !editingHours && (
+              <button 
+                onClick={() => setEditingHours(true)}
+                className="text-xs px-2 py-1 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200"
+                title="Ir a la edición de horas por actividad"
+              >
+                Ir a edición de horas
+              </button>
+            )}
+          </div>
           <div className="overflow-auto border rounded">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50">
@@ -268,43 +394,25 @@ const ReporteDetalleModal: React.FC<Props> = ({ open, onClose, reporte, activida
                         <div className="flex items-center gap-2">
                           <input
                             type="number"
-                            className="w-24 p-1 border rounded bg-white"
-                            value={(a.metrado ?? a.metrados) ?? ''}
-                            onChange={e => handleActividadChange(idx, 'metrado', e.target.value)}
+                            className={`w-24 p-1 border rounded ${editingHours ? 'bg-gray-100' : 'bg-white'}`}
+                            value={(a.metradoE || a.metrado || a.metrados) ?? ''}
+                            onChange={e => handleActividadChange(idx, 'metradoE', e.target.value)}
+                            disabled={editingHours}
+                            title={editingHours ? "Finalice la edición de horas antes de modificar metrados" : ""}
                           />
-                          <input
-                            type="text"
-                            className="w-16 p-1 border rounded bg-white"
-                            value={a.unidad || ''}
-                            onChange={e => handleActividadChange(idx, 'unidad', e.target.value)}
-                          />
-                          <input
-                            type="number"
-                            className="w-24 p-1 border rounded bg-white"
-                            placeholder="Plan"
-                            value={a.metradoP ?? ''}
-                            onChange={e => handleActividadChange(idx, 'metradoP', e.target.value)}
-                          />
+                          <span className="text-gray-500 ml-1">{a.unidad || ''}</span>
+                          {a.metradoP ? <span className="text-xs text-gray-500 ml-1">(Plan: {a.metradoP})</span> : ''}
                         </div>
                       ) : (
                         <>
-                          <span className="font-medium">{(a.metrado ?? a.metrados) as any}</span>
+                          <span className="font-medium">{(a.metradoE || a.metrado || a.metrados) as any}</span>
                           {a.unidad ? <span className="text-gray-500 ml-1">{a.unidad}</span> : ''}
                           {a.metradoP ? <span className="text-xs text-gray-500 ml-1">(Plan: {a.metradoP})</span> : ''}
                         </>
                       )}
                     </td>
                     <td className="px-3 py-2 text-right">
-                      {editMode ? (
-                        <input
-                          type="number"
-                          className="w-28 p-1 border rounded text-right bg-white"
-                          value={a.valorTotal ?? ''}
-                          onChange={e => handleActividadChange(idx, 'valorTotal', e.target.value)}
-                        />
-                      ) : (
-                        fmtMoney(a.valorTotal as number)
-                      )}
+                      {fmtMoney(a.valorTotal as number)}
                     </td>
                     <td className="px-3 py-2">
                       {editMode ? (
@@ -452,6 +560,64 @@ const ReporteDetalleModal: React.FC<Props> = ({ open, onClose, reporte, activida
             </table>
           </div>
         </div>
+
+        {/* NUEVA TABLA PARA EDITAR HORAS POR ACTIVIDAD */}
+        {editMode && (
+          <div className="p-4">
+            <div className="flex justify-between items-center mb-2">
+              <h4 className="font-medium text-yellow-600">
+                ⚠️ Editar Horas por Actividad
+              </h4>
+              <button 
+                onClick={() => setEditingHours(false)}
+                className="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded hover:bg-blue-200"
+                title="Permitir la edición de metrados"
+              >
+                Volver a edición de metrados
+              </button>
+            </div>
+            <div className="overflow-auto border rounded bg-yellow-50">
+              <table className="min-w-full text-sm">
+                <thead className="bg-yellow-100">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Trabajador</th>
+                    {actividadesEdit.map((act, idx) => (
+                      <th key={idx} className="px-3 py-2 text-center">
+                        Act. {idx + 1}
+                      </th>
+                    ))}
+                    <th className="px-3 py-2 text-center">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {manoObraEdit.map((trab, trabIdx) => (
+                    <tr key={trabIdx} className="border-t">
+                      <td className="px-3 py-2 font-medium">
+                        {trab.trabajador}
+                      </td>
+                      {actividadesEdit.map((_, actIdx) => (
+                        <td key={actIdx} className="px-3 py-2">
+                          <input
+                            type="number"
+                            className="w-16 p-1 border rounded text-center bg-white"
+                            value={trab.horasArray?.[actIdx] || '0'}
+                            onChange={e => handleHorasActividad(trabIdx, actIdx, e.target.value)}
+                            step="0.5"
+                            min="0"
+                            max="24"
+                          />
+                        </td>
+                      ))}
+                      <td className="px-3 py-2 text-center font-bold">
+                        {trab.totalHoras?.toFixed(1) || '0.0'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
