@@ -627,6 +627,74 @@ exports.rectificarReporte = onCall(async (request) => {
       );
     }
     
+    // 🆕 NUEVO PASO 4: ACTUALIZAR BIGQUERY
+    console.log('[Rectificación] Paso 4: Actualizando BigQuery...');
+    
+    if (enviarReporteDetalladoABigQuery) {
+      try {
+        // Primero, eliminar registros antiguos de BigQuery
+        const bigquery = new BigQuery({
+          projectId: 'pruebas-9e15f',
+          keyFilename: './credenciales.json'
+        });
+        
+        // Eliminar registros existentes del reporte
+        const deleteDetalladosQuery = `
+          DELETE FROM \`pruebas-9e15f.hergonsa_analytics.hergonsa_reportes_detallados\`
+          WHERE reporte_id = @reporteId
+        `;
+        
+        await bigquery.query({
+          query: deleteDetalladosQuery,
+          params: { reporteId: reporteId }
+        });
+        
+        const deleteResumenQuery = `
+          DELETE FROM \`pruebas-9e15f.hergonsa_analytics.hergonsa_resumen_diario\`
+          WHERE reporte_id = @reporteId
+        `;
+        
+        await bigquery.query({
+          query: deleteResumenQuery,
+          params: { reporteId: reporteId }
+        });
+        
+        console.log(`[Rectificación] Registros antiguos eliminados de BigQuery`);
+        
+        // Ahora insertar los datos actualizados
+        const reporteForBQ = {
+          id: reporteId,
+          fecha: originalData.fecha,
+          elaboradoPor: originalData.elaboradoPor || originalData.creadoPor,
+          subcontratistaBloque: originalData.subcontratistaBloque,
+          revisadoPor: originalData.revisadoPor
+        };
+        
+        // Usar los datos actualizados que ya tenemos
+        await enviarReporteDetalladoABigQuery(
+          reporteForBQ,
+          actividadesNuevas,
+          manoObraNueva
+        );
+        
+        // Marcar en Firestore que BigQuery fue actualizado
+        await docRef.update({
+          bigQueryActualizado: true,
+          fechaBigQueryUpdate: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        console.log(`[Rectificación] BigQuery actualizado exitosamente`);
+        
+      } catch (bqError) {
+        console.error('[Rectificación] Error actualizando BigQuery:', bqError);
+        // Marcar el error pero no fallar toda la operación
+        await docRef.update({
+          bigQueryActualizado: false,
+          bigQueryError: bqError.message
+        });
+      }
+    }
+    
     // 7. Actualizar documento principal
     await docRef.update({
       estado: 'RECTIFICADO',
@@ -638,7 +706,7 @@ exports.rectificarReporte = onCall(async (request) => {
     
     return {
       success: true,
-      mensaje: 'Reporte rectificado correctamente',
+      mensaje: 'Reporte rectificado correctamente (Firebase y BigQuery)',
       reporteId: reporteId
     };
     
