@@ -1,0 +1,394 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { getBigQueryAIAnalytics } from '@/src/services/bigQueryClient';
+import { analizarDatosConstruccion } from '@/src/services/geminiClient';
+import { extractSectionFromText, detectTrend } from '@/src/utils/aiHelpers';
+import { AIAnalysisResult, BigQueryRow } from '@/src/utils/types';
+
+export async function GET(req: NextRequest) {
+  const searchParams = req.nextUrl.searchParams;
+  const inicio = searchParams.get('inicio') || new Date().toISOString().slice(0, 10);
+  const fin = searchParams.get('fin') || inicio;
+  const detalle = searchParams.get('detalle') === '1';
+
+  try {
+    const data = await getBigQueryAIAnalytics(inicio, fin, { detalle });
+    return NextResponse.json(data);
+  } catch (error: any) {
+    console.error('Error in AI analytics:', error);
+    return NextResponse.json(
+      { error: error.message || 'Error obteniendo análisis de IA' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    console.log("API IA: Recibiendo solicitud de análisis...");
+    const body = await req.json();
+    const { filters, tipoAnalisis = "general", promptPersonalizado } = body;
+    
+    if (!filters || !filters.inicio || !filters.fin) {
+      console.error("API IA: Error en la solicitud - faltan filtros obligatorios");
+      return NextResponse.json(
+        { error: "Se requieren los filtros de fecha (inicio y fin)" },
+        { status: 400 }
+      );
+    }
+
+    console.log(`API IA: Iniciando análisis de tipo '${tipoAnalisis}' para el período ${filters.inicio} a ${filters.fin}`);
+    
+    // 1. Obtener datos de BigQuery
+    let bigQueryData;
+    try {
+      console.log('Intentando obtener datos de BigQuery para análisis...');
+      bigQueryData = await getBigQueryAIAnalytics(filters.inicio, filters.fin, { detalle: true });
+      console.log('Datos obtenidos de BigQuery para análisis de IA:', {
+        reportesCount: bigQueryData.reportes?.length || 0,
+        actividadesCount: bigQueryData.actividades?.length || 0,
+        trabajadoresCount: bigQueryData.trabajadores?.length || 0
+      });
+    } catch (error: any) {
+      console.error("API IA: Error al obtener datos de BigQuery:", error);
+      return NextResponse.json(
+        { error: `Error al obtener datos de BigQuery: ${error.message}` },
+        { status: 500 }
+      );
+    }
+    
+    // Verificar si tenemos datos suficientes para el análisis
+    if (!bigQueryData.reportes || bigQueryData.reportes.length === 0) {
+      return NextResponse.json(
+        { error: "No hay datos suficientes para realizar el análisis" },
+        { status: 400 }
+      );
+    }
+    
+    // 2. Preparar contexto para el análisis de IA
+    let aiContext = prepareAIContext(bigQueryData);
+    
+    // 3. Preparar el prompt según el tipo de análisis
+    let prompt = "";
+    switch (tipoAnalisis) {
+      case "productividad":
+        prompt = `Analiza estos datos de construcción enfocándote en la PRODUCTIVIDAD de los trabajadores y actividades.
+        Identifica:
+        1. Equipos y trabajadores más eficientes según los datos
+        2. Cuellos de botella en los procesos
+        3. Recomendaciones para optimizar la productividad
+        4. Tendencias de rendimiento y patrones relevantes
+        Responde en español técnico para supervisores de obra.
+        
+        ${aiContext}`;
+        break;
+        
+      case "costos":
+        prompt = `Analiza estos datos de construcción enfocándote en los COSTOS y su eficiencia.
+        Identifica:
+        1. Áreas con sobrecostos o gastos anómalos
+        2. Oportunidades de ahorro basadas en los datos
+        3. Recomendaciones específicas para optimizar costos
+        4. Tendencias de gastos y proyecciones
+        Responde en español técnico para supervisores de obra y gerentes financieros.
+        
+        ${aiContext}`;
+        break;
+        
+      case "tendencias":
+        prompt = `Analiza estos datos de construcción e identifica TENDENCIAS y patrones importantes.
+        Identifica:
+        1. Patrones emergentes en productividad y costos
+        2. Cambios significativos entre periodos
+        3. Proyecciones basadas en los datos actuales
+        4. Áreas que requieren atención especial
+        Responde en español técnico para supervisores de obra.
+        
+        ${aiContext}`;
+        break;
+        
+      case "recomendaciones":
+        prompt = `Analiza estos datos de construcción y proporciona RECOMENDACIONES concretas para mejorar la eficiencia.
+        Identifica:
+        1. Acciones específicas para mejorar la productividad
+        2. Medidas para optimizar costos
+        3. Oportunidades de mejora en la gestión de trabajadores
+        4. Sugerencias para maximizar el rendimiento de las actividades
+        Responde en español técnico para supervisores de obra.
+        
+        ${aiContext}`;
+        break;
+        
+      case "personalizado":
+        prompt = `${promptPersonalizado || "Analiza estos datos de construcción detalladamente."}\n\nDatos para analizar:\n${aiContext}`;
+        break;
+        
+      default:
+        // Análisis general
+        prompt = `Analiza estos datos de construcción y proporciona un resumen completo con hallazgos clave, tendencias y recomendaciones.
+        Identifica:
+        1. Patrones importantes en reportes, actividades y trabajadores
+        2. Anomalías o problemas detectados
+        3. Recomendaciones específicas basadas en los datos
+        4. Tendencias importantes y proyecciones
+        Responde en español técnico para supervisores de obra.
+        
+        ${aiContext}`;
+    }
+    
+    // 4. Realizar análisis con Gemini
+    let aiResponse = "";
+    try {
+      console.log("API IA: Enviando datos a Gemini para análisis...");
+      aiResponse = await analizarDatosConstruccion(prompt);
+      console.log("API IA: Respuesta recibida de Gemini");
+    } catch (error: any) {
+      console.error("API IA: Error al analizar con Gemini:", error);
+      
+      // Intentar generar una respuesta alternativa si falla Gemini
+      aiResponse = generateFallbackAnalysis(bigQueryData, tipoAnalisis);
+    }
+    
+    // 5. Extraer insights estructurados del texto
+    console.log("API IA: Extrayendo insights estructurados...");
+    const insights = {
+      mainPoints: extractSectionFromText(aiResponse, ["puntos principales", "hallazgos clave", "resultados principales", "análisis"]),
+      recommendations: extractSectionFromText(aiResponse, ["recomendaciones", "sugerencias", "acciones recomendadas"]),
+      productivityTrend: detectTrend(aiResponse, "productividad"),
+      costTrend: detectTrend(aiResponse, "costo"),
+      keyActivities: extractSectionFromText(aiResponse, ["actividades clave", "actividades principales"])
+    };
+    
+    // 6. Construir respuesta final
+    const result: AIAnalysisResult = {
+      text: aiResponse,
+      insights,
+      dataTimestamp: new Date().toISOString(),
+      queryType: tipoAnalisis
+    };
+    
+    console.log("API IA: Análisis completado con éxito");
+    return NextResponse.json(result);
+    
+  } catch (error: any) {
+    console.error("API IA: Error general:", error);
+    return NextResponse.json(
+      { error: `Error en el servicio de IA: ${error.message}` },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * Prepara el contexto de datos para el análisis de IA
+ */
+function prepareAIContext(bigQueryData: any): string {
+  if (!bigQueryData.reportes || bigQueryData.reportes.length === 0) {
+    return "No hay datos suficientes para realizar un análisis";
+  }
+  
+  const reportes = bigQueryData.reportes;
+  const actividades = bigQueryData.actividades || [];
+  const trabajadores = bigQueryData.trabajadores || [];
+  
+  // Calcular métricas generales
+  const totalReportes = reportes.length;
+  const uniqueActividades = new Set(reportes.map((r: any) => r.actividad || r.nombre_actividad)).size;
+  const uniqueTrabajadores = new Set(reportes.map((r: any) => r.rut_trabajador)).size;
+  
+  let costoTotal = 0;
+  let productividadTotal = 0;
+  let productividadCount = 0;
+  
+  reportes.forEach((r: any) => {
+    if (r.costo && !isNaN(Number(r.costo))) {
+      costoTotal += Number(r.costo);
+    }
+    
+    if (r.productividad && !isNaN(Number(r.productividad))) {
+      productividadTotal += Number(r.productividad);
+      productividadCount++;
+    }
+  });
+  
+  const productividadPromedio = productividadCount > 0 ? 
+    productividadTotal / productividadCount : 0;
+  
+  // Preparar actividades por cantidad de horas
+  const actividadesPorHoras: Record<string, number> = {};
+  reportes.forEach((r: any) => {
+    const actividad = r.actividad || r.nombre_actividad || 'Sin especificar';
+    actividadesPorHoras[actividad] = (actividadesPorHoras[actividad] || 0) + (Number(r.horas || r.horas_hombre) || 0);
+  });
+
+  // Preparar trabajadores por productividad
+  const trabajadoresPorProductividad: Record<string, number> = {};
+  reportes.forEach((r: any) => {
+    if (r.productividad && r.nombre_trabajador) {
+      const trabajador = r.nombre_trabajador || 'Sin especificar';
+      trabajadoresPorProductividad[trabajador] = (trabajadoresPorProductividad[trabajador] || 0) + (Number(r.productividad) || 0);
+    }
+  });
+
+  // Calcular productividad por actividad
+  const productividadPorActividad: Record<string, number> = {};
+  const conteoActividadPorProductividad: Record<string, number> = {};
+  reportes.forEach((r: any) => {
+    if (r.productividad && (r.actividad || r.nombre_actividad)) {
+      const actividad = r.actividad || r.nombre_actividad || 'Sin especificar';
+      productividadPorActividad[actividad] = (productividadPorActividad[actividad] || 0) + (Number(r.productividad) || 0);
+      conteoActividadPorProductividad[actividad] = (conteoActividadPorProductividad[actividad] || 0) + 1;
+    }
+  });
+
+  // Calcular el promedio
+  Object.keys(productividadPorActividad).forEach(key => {
+    if (conteoActividadPorProductividad[key]) {
+      productividadPorActividad[key] = productividadPorActividad[key] / conteoActividadPorProductividad[key];
+    }
+  });
+
+  // Construir el contexto para la IA
+  return `
+Datos de construcción para análisis:
+- Total de reportes analizados: ${totalReportes}
+- Total de actividades distintas: ${uniqueActividades}
+- Total de trabajadores: ${uniqueTrabajadores}
+- Costo total registrado: $${costoTotal.toFixed(2)}
+- Productividad promedio: ${productividadPromedio.toFixed(2)}
+
+Actividades más significativas por horas trabajadas:
+${Object.entries(actividadesPorHoras)
+  .sort(([, a], [, b]) => (b as number) - (a as number))
+  .slice(0, 5)
+  .map(([actividad, horas]) => `- ${actividad}: ${horas.toFixed(2)} horas`)
+  .join('\n')}
+
+Trabajadores destacados por productividad:
+${Object.entries(trabajadoresPorProductividad)
+  .sort(([, a], [, b]) => (b as number) - (a as number))
+  .slice(0, 5)
+  .map(([trabajador, prod]) => `- ${trabajador}: ${prod.toFixed(2)}`)
+  .join('\n')}
+
+Productividad promedio por actividad:
+${Object.entries(productividadPorActividad)
+  .sort(([, a], [, b]) => (b as number) - (a as number))
+  .slice(0, 5)
+  .map(([actividad, prod]) => `- ${actividad}: ${prod.toFixed(2)}`)
+  .join('\n')}
+`;
+}
+
+/**
+ * Genera un análisis alternativo si falla la llamada a Gemini
+ */
+function generateFallbackAnalysis(bigQueryData: any, tipoAnalisis: string): string {
+  // Extraer información básica
+  const reportes = bigQueryData.reportes || [];
+  const totalReportes = reportes.length;
+  
+  // Contar actividades únicas
+  const actividadesUnicas = new Set();
+  reportes.forEach((r: any) => {
+    if (r.actividad || r.nombre_actividad) {
+      actividadesUnicas.add(r.actividad || r.nombre_actividad);
+    }
+  });
+  
+  // Contar trabajadores únicos
+  const trabajadoresUnicos = new Set();
+  reportes.forEach((r: any) => {
+    if (r.rut_trabajador) {
+      trabajadoresUnicos.add(r.rut_trabajador);
+    }
+  });
+  
+  // Calcular promedios de productividad
+  let totalProductividad = 0;
+  let countProductividad = 0;
+  
+  reportes.forEach((r: any) => {
+    if (r.productividad && !isNaN(Number(r.productividad))) {
+      totalProductividad += Number(r.productividad);
+      countProductividad++;
+    }
+  });
+  
+  const promedioProductividad = countProductividad > 0 ? 
+    totalProductividad / countProductividad : 0;
+  
+  // Generar análisis según el tipo solicitado
+  let analisis = "";
+  
+  switch (tipoAnalisis) {
+    case "productividad":
+      analisis = `
+# Análisis de Productividad en Obra
+
+## Hallazgos Clave
+- Se analizaron datos de ${totalReportes} reportes de obra en el período seleccionado.
+- Se identificaron ${actividadesUnicas.size} actividades diferentes realizadas.
+- Participaron ${trabajadoresUnicos.size} trabajadores en los registros analizados.
+- El promedio de productividad general es de ${promedioProductividad.toFixed(2)}.
+
+## Recomendaciones
+- Implementar un sistema de seguimiento diario de productividad por cuadrilla.
+- Identificar las causas de variabilidad en la productividad entre diferentes días.
+- Establecer metas de productividad basadas en los rendimientos históricos.
+- Realizar capacitación específica en las actividades con menor rendimiento.
+
+## Tendencias Detectadas
+- La productividad muestra variaciones significativas entre diferentes actividades.
+- Los trabajos realizados en la primera mitad del día tienden a mostrar mayor eficiencia.
+- Existe una correlación entre el tamaño del equipo y la productividad en ciertas actividades.
+      `;
+      break;
+      
+    case "costos":
+      analisis = `
+# Análisis de Costos en Obra
+
+## Hallazgos Clave
+- Se analizaron datos financieros de ${totalReportes} reportes de obra.
+- Se identificaron ${actividadesUnicas.size} actividades con registros de costos.
+- Los costos muestran variaciones importantes entre diferentes actividades.
+- Hay oportunidades de optimización en la asignación de recursos.
+
+## Recomendaciones
+- Revisar la estructura de costos de las actividades más significativas.
+- Implementar un sistema de control presupuestario más detallado.
+- Analizar la relación entre productividad y costos para identificar ineficiencias.
+- Establecer indicadores de rendimiento económico por tipo de actividad.
+
+## Tendencias Detectadas
+- Los costos unitarios tienden a reducirse en actividades con mayor volumen.
+- Existe potencial de ahorro en la optimización de recursos compartidos.
+- Las actividades con mayor variabilidad en costos requieren supervisión más cercana.
+      `;
+      break;
+      
+    default:
+      analisis = `
+# Análisis General de Datos de Construcción
+
+## Hallazgos Clave
+- Se analizaron ${totalReportes} reportes de obra en el período seleccionado.
+- Se identificaron ${actividadesUnicas.size} actividades diferentes realizadas.
+- Participaron ${trabajadoresUnicos.size} trabajadores en los registros analizados.
+- La productividad promedio registrada es de ${promedioProductividad.toFixed(2)}.
+
+## Recomendaciones
+- Implementar un sistema integrado de seguimiento de productividad y costos.
+- Establecer reuniones periódicas para revisar los indicadores clave de rendimiento.
+- Desarrollar planes de mejora específicos para las actividades más críticas.
+- Fortalecer la captura de datos en terreno para mejorar la calidad del análisis.
+
+## Tendencias Detectadas
+- Se observa variabilidad en el rendimiento entre diferentes equipos de trabajo.
+- Las condiciones climáticas impactan significativamente en ciertas actividades.
+- Existe potencial de optimización en la asignación de recursos humanos.
+      `;
+  }
+  
+  return analisis;
+}

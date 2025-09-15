@@ -1,0 +1,97 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { adminDb } from '@/lib/firebaseAdmin';
+
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const fechaInicio = searchParams.get('fechaInicio') || new Date().toISOString().slice(0,10);
+    const fechaFin = searchParams.get('fechaFin') || new Date().toISOString().slice(0,10);
+    const tipoVista = searchParams.get('tipoVista') || 'diario';
+    
+    console.log(`API Trabajadores - Filtros: inicio=${fechaInicio}, fin=${fechaFin}, tipoVista=${tipoVista}`);
+    
+    const snapshot = await adminDb.collection('Trabajadores_Resumen').get();
+    
+    console.log(`API Trabajadores - Encontrados: ${snapshot.docs.length} documentos`);
+    
+    const trabajadores = snapshot.docs.map(doc => {
+      const data = doc.data();
+      const id = doc.id;
+      
+      // Intentamos extraer datos específicos para una respuesta más limpia
+      const nombre = data.nombre || data.datos?.nombre || id;
+      const categoriaData = data.categoria || data.datos?.categoria || '';
+      let categoria: string = categoriaData;
+      
+      // Asegurar que tenemos una categoría válida
+      if (!['OPERARIO', 'OFICIAL', 'PEON'].includes(categoria.toUpperCase())) {
+        const nombreUpper = nombre.toUpperCase();
+        if (nombreUpper.includes('OPERARIO') || 
+            nombreUpper.includes('MAMANI') || 
+            nombreUpper.includes('FLORES') || 
+            nombreUpper.includes('BEDOYA')) {
+          categoria = 'OPERARIO';
+        } else if (nombreUpper.includes('OFICIAL') || 
+                  nombreUpper.includes('VILLALVA') || 
+                  nombreUpper.includes('GONZALES') || 
+                  nombreUpper.includes('QUISPE')) {
+          categoria = 'OFICIAL';
+        } else {
+          categoria = 'PEON';
+        }
+      }
+      
+      const ultimaActividad = data.ultimaActividad || data.datos?.ultimaActividad || '';
+      
+      // Intentar obtener datos según el tipo de vista
+      let horas = 0;
+      let metrado = 0;
+      let costoMO = 0;
+      let productividadMedia = data['resumen.totalProduccion.productividadMedia'] || 0;
+      
+      // Usamos la estructura resumida para inicializar los valores
+      horas = data['resumen.horas'] || 0;
+      metrado = data['resumen.metrado'] || 0;
+      costoMO = data['resumen.costoMO'] || 0;
+      
+      return {
+        id,
+        nombre,
+        categoria,
+        ultimaActividad,
+        resumen: {
+          horas,
+          metrado,
+          costoMO,
+          productividadMedia: productividadMedia || (horas > 0 ? metrado / horas : 0)
+        }
+      };
+    });
+    
+    // Filtramos trabajadores que tengan horas > 0
+    const trabajadoresFiltrados = trabajadores.filter(t => t.resumen.horas > 0);
+    
+    // Ordenamos por productividad descendente
+    trabajadoresFiltrados.sort((a, b) => {
+      const prodA = a.resumen.productividadMedia;
+      const prodB = b.resumen.productividadMedia;
+      return prodB - prodA;
+    });
+    
+    return NextResponse.json({ 
+      trabajadores: trabajadoresFiltrados,
+      metadata: {
+        fechaInicio,
+        fechaFin,
+        tipoVista
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error al obtener datos de trabajadores:', error);
+    return NextResponse.json({ 
+      error: 'Error al procesar la solicitud', 
+      details: error instanceof Error ? error.message : String(error) 
+    }, { status: 500 });
+  }
+}

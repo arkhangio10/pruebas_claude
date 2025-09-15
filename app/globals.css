@@ -1,0 +1,21 @@
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global overrides / tokens */
+body { @apply bg-gray-50 text-gray-800 antialiased; }
+h1,h2,h3,h4 { @apply font-semibold tracking-tight; }
+button { @apply font-medium; }
+main { padding: 16px; }
+.grid { display: grid; gap: 16px; }
+.kpi { padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
+.card { padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
+.row { display: flex; gap: 16px; flex-wrap: wrap; }
+.grow { flex: 1; min-width: 280px; }
+.muted { color: #666; font-size: 12px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; }
+
