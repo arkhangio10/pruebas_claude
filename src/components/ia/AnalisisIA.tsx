@@ -1,218 +1,334 @@
-"use client";
 import React, { useState } from 'react';
-import { useIA, IAAnalysisType, IAQuery } from '@/context/IAContext';
-import { useDashboard } from '@/context/DashboardContext';
 
-export const AnalisisIA: React.FC = () => {
-  const { datos, filtros } = useDashboard();
-  const { loading, analytics, consultarIA } = useIA();
+// Definición de interfaces para tipado
+interface Metadata {
+  periodo?: string;
+  registrosAnalizados?: number;
+  fuenteDatos?: string;
+}
+
+interface Insights {
+  productivityTrend?: 'aumentando' | 'disminuyendo' | 'estable';
+  costTrend?: 'aumentando' | 'disminuyendo' | 'estable';
+  mainPoints?: string[];
+  recommendations?: string[];
+}
+
+interface ResultadoAnalisis {
+  metadata?: Metadata;
+  dataTimestamp?: string;
+  insights?: Insights;
+  text?: string;
+}
+
+const AnalisisIABigQuery = () => {
+  const [loading, setLoading] = useState(false);
+  const [resultado, setResultado] = useState<ResultadoAnalisis | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedType, setSelectedType] = useState<IAAnalysisType>('general');
-  const [customPrompt, setCustomPrompt] = useState<string>('');
-  const [showCustom, setShowCustom] = useState(false);
+  const [tipoAnalisis, setTipoAnalisis] = useState('general');
+  const [fechaInicio, setFechaInicio] = useState(() => {
+    const hoy = new Date();
+    const inicio = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+    return inicio.toISOString().split('T')[0];
+  });
+  const [fechaFin, setFechaFin] = useState(() => {
+    return new Date().toISOString().split('T')[0];
+  });
+  const [promptPersonalizado, setPromptPersonalizado] = useState('');
+  const [mostrarPromptPersonalizado, setMostrarPromptPersonalizado] = useState(false);
+  // Nuevo estado para controlar la expansión del texto
+  const [mostrarTextoCompleto, setMostrarTextoCompleto] = useState(false);
 
-  async function handleAnalyze() {
-    // Limpiar errores previos
+  const ejecutarAnalisis = async () => {
+    setLoading(true);
     setError(null);
-    
-    const query: IAQuery = {
-      tipo: selectedType,
-      prompt: showCustom ? customPrompt : undefined,
-      detalle: true
-    };
-    
+    setResultado(null);
+
     try {
-      console.log(`Iniciando análisis de tipo: ${selectedType}`);
-      await consultarIA(query);
-      console.log('Análisis completado con éxito');
-    } catch (e: any) {
-      console.error("Error al consultar IA:", e);
-      setError(`Error al consultar IA: ${e.message || 'Error desconocido'}`);
+      const payload = {
+        filters: {
+          inicio: fechaInicio,
+          fin: fechaFin
+        },
+        tipoAnalisis: tipoAnalisis,
+        ...(tipoAnalisis === 'personalizado' && promptPersonalizado 
+          ? { promptPersonalizado } 
+          : {})
+      };
+
+      const response = await fetch('/api/ai', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Error en el análisis');
+      }
+
+      const data = await response.json();
+      setResultado(data);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Error desconocido';
+      setError(errorMessage);
+      console.error('Error:', err);
+    } finally {
+      setLoading(false);
     }
-  }
-  
-  // Añadir función para limpiar error
-  function limpiarError() {
-    setError(null);
-  }
+  };
+
+  const tiposAnalisis = [
+    { valor: 'general', nombre: '📊 Análisis General', color: 'bg-blue-500' },
+    { valor: 'costos', nombre: '💰 Análisis de Costos', color: 'bg-green-500' },
+    { valor: 'productividad', nombre: '⚡ Análisis de Productividad', color: 'bg-yellow-500' },
+    { valor: 'tendencias', nombre: '📈 Análisis de Tendencias', color: 'bg-purple-500' },
+    { valor: 'recomendaciones', nombre: '💡 Recomendaciones', color: 'bg-orange-500' },
+    { valor: 'personalizado', nombre: '✨ Análisis Personalizado', color: 'bg-pink-500' }
+  ];
+
+  const formatearNumero = (num: number | undefined | null): string => {
+    if (num === undefined || num === null) return '0';
+    return new Intl.NumberFormat('es-PE').format(num);
+  };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200 space-y-6">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Análisis de Inteligencia Artificial</h3>
-        <div className="text-sm text-gray-500">
-          Datos: {filtros.fechaInicio} a {filtros.fechaFin}
-        </div>
+    <div className="space-y-6 p-6 max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 rounded-lg shadow-lg">
+        <h1 className="text-3xl font-bold mb-2">🤖 Análisis Inteligente con IA</h1>
+        <p className="text-blue-100">
+          Análisis avanzado de datos de construcción usando Google Gemini y BigQuery
+        </p>
       </div>
-      
-      {/* Selector de tipo de análisis */}
-      <div className="space-y-4">
-        <div className="flex flex-wrap gap-2">
-          <button 
-            onClick={() => setSelectedType('general')}
-            className={`px-4 py-2 rounded-md ${selectedType === 'general' 
-              ? 'bg-green-600 text-white' 
-              : 'bg-gray-100 hover:bg-gray-200'}`}
-          >
-            General
-          </button>
-          <button 
-            onClick={() => setSelectedType('costos')}
-            className={`px-4 py-2 rounded-md ${selectedType === 'costos' 
-              ? 'bg-orange-600 text-white' 
-              : 'bg-gray-100 hover:bg-gray-200'}`}
-          >
-            Costos
-          </button>
-          <button 
-            onClick={() => setSelectedType('productividad')}
-            className={`px-4 py-2 rounded-md ${selectedType === 'productividad' 
-              ? 'bg-blue-600 text-white' 
-              : 'bg-gray-100 hover:bg-gray-200'}`}
-          >
-            Productividad
-          </button>
-          <button 
-            onClick={() => setSelectedType('tendencias')}
-            className={`px-4 py-2 rounded-md ${selectedType === 'tendencias' 
-              ? 'bg-amber-700 text-white' 
-              : 'bg-gray-100 hover:bg-gray-200'}`}
-          >
-            Tendencias
-          </button>
-          <button 
-            onClick={() => setSelectedType('recomendaciones')}
-            className={`px-4 py-2 rounded-md ${selectedType === 'recomendaciones' 
-              ? 'bg-pink-600 text-white' 
-              : 'bg-gray-100 hover:bg-gray-200'}`}
-          >
-            Recomendaciones
-          </button>
-          <button 
-            onClick={() => {
-              setSelectedType('personalizado');
-              setShowCustom(true);
-            }}
-            className={`px-4 py-2 rounded-md ${selectedType === 'personalizado' 
-              ? 'bg-purple-600 text-white' 
-              : 'bg-purple-100 hover:bg-purple-200'}`}
-          >
-            Personalizado
-          </button>
+
+      {/* Controles */}
+      <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Fecha Inicio
+            </label>
+            <input
+              type="date"
+              value={fechaInicio}
+              onChange={(e) => setFechaInicio(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Fecha Fin
+            </label>
+            <input
+              type="date"
+              value={fechaFin}
+              onChange={(e) => setFechaFin(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Tipo de Análisis
+            </label>
+            <select
+              value={tipoAnalisis}
+              onChange={(e) => {
+                setTipoAnalisis(e.target.value);
+                setMostrarPromptPersonalizado(e.target.value === 'personalizado');
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+            >
+              {tiposAnalisis.map(tipo => (
+                <option key={tipo.valor} value={tipo.valor}>
+                  {tipo.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        
-        {/* Prompt personalizado */}
-        {showCustom && (
-          <div className="space-y-2">
-            <label htmlFor="customPrompt" className="block text-sm font-medium text-gray-700">
-              Prompt personalizado:
+
+        {/* Prompt Personalizado */}
+        {mostrarPromptPersonalizado && (
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Prompt Personalizado
             </label>
             <textarea
-              id="customPrompt"
-              value={customPrompt}
-              onChange={(e) => setCustomPrompt(e.target.value)}
-              className="w-full rounded-md border border-purple-300 shadow-sm p-2 min-h-[100px] bg-purple-50"
-              placeholder="Escribe tu pregunta o instrucción específica para analizar los datos..."
+              value={promptPersonalizado}
+              onChange={(e) => setPromptPersonalizado(e.target.value)}
+              placeholder="Escribe tu consulta específica sobre los datos del proyecto..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-md h-32 focus:ring-2 focus:ring-blue-500"
             />
           </div>
         )}
-        
-        <button 
-          onClick={handleAnalyze} 
-          disabled={loading || !datos} 
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-md"
-        >
-          {loading ? 'Analizando...' : 'Analizar Datos'}
-        </button>
+
+        {/* Botón de Análisis */}
+        <div className="flex justify-center mt-6">
+          <button
+            onClick={ejecutarAnalisis}
+            disabled={loading}
+            className={`px-8 py-3 rounded-lg font-semibold text-white transition-all duration-200 transform hover:scale-105 ${
+              loading 
+                ? 'bg-gray-400 cursor-not-allowed' 
+                : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg'
+            }`}
+          >
+            {loading ? (
+              <span className="flex items-center">
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Analizando con IA...
+              </span>
+            ) : (
+              '🚀 Ejecutar Análisis IA'
+            )}
+          </button>
+        </div>
       </div>
-      
-      {/* Mensaje de error */}
+
+      {/* Error */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-md">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="font-medium">Error</p>
-              <p className="text-sm">{error}</p>
-            </div>
-            <button 
-              onClick={limpiarError}
-              className="text-red-500 hover:text-red-700"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+        <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-md">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
               </svg>
-            </button>
+            </div>
+            <div className="ml-3">
+              <p className="text-sm text-red-700">{error}</p>
+            </div>
           </div>
         </div>
       )}
-      
-      {/* Spinner de carga */}
-      {loading && (
-        <div className="flex justify-center items-center py-8">
-          <div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full" />
-        </div>
-      )}
-      
+
       {/* Resultados */}
-      {analytics && !loading && (
+      {resultado && (
         <div className="space-y-6">
-          {/* Información sobre la fuente de datos */}
-          {analytics.rawData && analytics.rawData.bigQueryData && (
-            <div className="bg-blue-50 border border-blue-200 rounded-md p-3 flex items-center space-x-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-              </svg>
-              <span className="text-sm text-blue-700">
-                {analytics.rawData.usandoRespuestaSimulada 
-                  ? "Análisis basado en datos locales (BigQuery no disponible)" 
-                  : "Análisis basado en datos reales de BigQuery"}
-              </span>
+          {/* Metadatos */}
+          <div className="bg-gray-50 p-4 rounded-lg">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <span className="text-gray-500">Período:</span>
+                <p className="font-semibold">{resultado.metadata?.periodo || 'N/A'}</p>
+              </div>
+              <div>
+                <span className="text-gray-500">Registros Analizados:</span>
+                <p className="font-semibold">{formatearNumero(resultado.metadata?.registrosAnalizados)}</p>
+              </div>
+              <div>
+                <span className="text-gray-500">Fuente:</span>
+                <p className="font-semibold">{resultado.metadata?.fuenteDatos || 'N/A'}</p>
+              </div>
+              <div>
+                <span className="text-gray-500">Timestamp:</span>
+                <p className="font-semibold">
+                  {resultado.dataTimestamp ? new Date(resultado.dataTimestamp).toLocaleString('es-PE') : 'N/A'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Tendencias */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className={`p-4 rounded-lg ${
+              resultado.insights?.productivityTrend === 'aumentando' ? 'bg-green-50 border-green-200' :
+              resultado.insights?.productivityTrend === 'disminuyendo' ? 'bg-red-50 border-red-200' :
+              'bg-gray-50 border-gray-200'
+            } border`}>
+              <h3 className="font-semibold text-lg mb-2">📊 Tendencia de Productividad</h3>
+              <p className={`text-2xl font-bold ${
+                resultado.insights?.productivityTrend === 'aumentando' ? 'text-green-600' :
+                resultado.insights?.productivityTrend === 'disminuyendo' ? 'text-red-600' :
+                'text-gray-600'
+              }`}>
+                {resultado.insights?.productivityTrend === 'aumentando' ? '↗️ Mejorando' :
+                 resultado.insights?.productivityTrend === 'disminuyendo' ? '↘️ Disminuyendo' :
+                 '→ Estable'}
+              </p>
+            </div>
+            <div className={`p-4 rounded-lg ${
+              resultado.insights?.costTrend === 'aumentando' ? 'bg-red-50 border-red-200' :
+              resultado.insights?.costTrend === 'disminuyendo' ? 'bg-green-50 border-green-200' :
+              'bg-gray-50 border-gray-200'
+            } border`}>
+              <h3 className="font-semibold text-lg mb-2">💰 Tendencia de Costos</h3>
+              <p className={`text-2xl font-bold ${
+                resultado.insights?.costTrend === 'aumentando' ? 'text-red-600' :
+                resultado.insights?.costTrend === 'disminuyendo' ? 'text-green-600' :
+                'text-gray-600'
+              }`}>
+                {resultado.insights?.costTrend === 'aumentando' ? '↗️ Aumentando' :
+                 resultado.insights?.costTrend === 'disminuyendo' ? '↘️ Reduciendo' :
+                 '→ Estable'}
+              </p>
+            </div>
+          </div>
+
+          {/* Hallazgos Principales */}
+          {resultado.insights?.mainPoints && resultado.insights.mainPoints.length > 0 && (
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <h3 className="text-xl font-bold mb-4 text-blue-800">🔍 Hallazgos Principales</h3>
+              <ul className="space-y-3">
+                {resultado.insights.mainPoints.map((point, index) => (
+                  <li key={index} className="flex items-start">
+                    <span className="flex-shrink-0 w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center font-semibold text-sm mr-3">
+                      {index + 1}
+                    </span>
+                    <span className="text-gray-700">{point}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
-          
-          <div className="border-t border-gray-200 pt-4">
-            <h4 className="font-medium text-lg mb-2">Insights</h4>
-            <ul className="list-disc pl-5 space-y-1">
-              {analytics.insights.map((insight, index) => (
-                <li key={index} className="text-gray-700">{insight}</li>
-              ))}
-            </ul>
-          </div>
-          
-          <div className="border-t border-gray-200 pt-4">
-            <h4 className="font-medium text-lg mb-2">Recomendaciones</h4>
-            <ul className="list-disc pl-5 space-y-1">
-              {analytics.recommendations.map((rec, index) => (
-                <li key={index} className="text-gray-700">{rec}</li>
-              ))}
-            </ul>
-          </div>
-          
-          <div className="border-t border-gray-200 pt-4">
-            <h4 className="font-medium text-lg mb-2">Tendencias</h4>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {Object.entries(analytics.trends).map(([key, value]) => (
-                <div key={key} className="bg-gray-50 p-3 rounded-md">
-                  <span className="text-gray-500 text-sm capitalize">{key}</span>
-                  <p className="font-medium capitalize">{value}</p>
-                </div>
-              ))}
+
+          {/* Recomendaciones */}
+          {resultado.insights?.recommendations && resultado.insights.recommendations.length > 0 && (
+            <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg shadow-md p-6">
+              <h3 className="text-xl font-bold mb-4 text-green-800">💡 Recomendaciones</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {resultado.insights.recommendations.map((rec, index) => (
+                  <div key={index} className="bg-white p-4 rounded-lg shadow-sm">
+                    <div className="flex items-start">
+                      <span className="flex-shrink-0 text-2xl mr-3">
+                        {index === 0 ? '🎯' : index === 1 ? '⚡' : index === 2 ? '📈' : index === 3 ? '👥' : '✅'}
+                      </span>
+                      <p className="text-sm text-gray-700">{rec}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-          
-          <div className="text-right text-xs text-gray-400">
-            Actualizado: {new Date(analytics.timestamp).toLocaleString()}
-            {analytics.rawData && (
-              <>
-                {" • "}
-                Reportes: {analytics.rawData.kpisCount || 0}
-                {" • "}
-                Actividades: {analytics.rawData.actividadesCount || 0}
-              </>
-            )}
+          )}
+
+          {/* Análisis Completo */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-gray-800">📝 Análisis Completo</h3>
+              <button
+                onClick={() => setMostrarTextoCompleto(!mostrarTextoCompleto)}
+                className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+              >
+                Ver {mostrarTextoCompleto ? 'menos' : 'más'}
+              </button>
+            </div>
+            <div 
+              className={`prose max-w-none text-gray-700 overflow-y-auto whitespace-pre-wrap ${
+                !mostrarTextoCompleto ? 'max-h-96' : ''
+              }`}
+            >
+              {resultado.text || 'No hay análisis disponible'}
+            </div>
           </div>
         </div>
       )}
     </div>
   );
 };
+
+export default AnalisisIABigQuery;

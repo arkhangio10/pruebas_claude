@@ -1,6 +1,6 @@
 "use client";
 import React from 'react';
-import { AnalisisIA } from '../../components/ia/AnalisisIA';
+import  AnalisisIA  from '../../components/ia/AnalisisIA';
 import { IAHistorial } from '../../components/ia/IAHistorial';
 import IAResultado from '../../components/ia/IAResultado';
 import { IAProvider } from '@/context/IAContext';
