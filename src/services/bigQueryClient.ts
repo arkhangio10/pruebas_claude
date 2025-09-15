@@ -79,9 +79,12 @@ export async function getBigQueryAIAnalytics(inicio: string, fin: string, option
     detalle: options?.detalle ? '1' : '0'
   });
   
-  // Construye una URL absoluta para evitar problemas de parseo
-  const baseUrl = window.location.origin; // Obtiene la URL base actual (ej: http://localhost:3000)
-  const url = `${baseUrl}${AI_ENDPOINT}/ai?${queryParams.toString()}`;
+  // Construye la URL de forma segura sin usar 'window'
+  const endpointUrl = new URL(AI_ENDPOINT);
+  endpointUrl.pathname += '/ai';
+  endpointUrl.search = queryParams.toString();
+
+  const url = endpointUrl.toString();
   console.log(`Conectando a BigQuery AI en: ${url}`);
   
   try {
