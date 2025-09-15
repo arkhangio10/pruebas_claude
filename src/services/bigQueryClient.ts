@@ -15,7 +15,7 @@ export interface BigQueryAIAnalyticsResult {
 }
 
 const ENDPOINT = process.env.NEXT_PUBLIC_BIGQUERY_FUNCTION_URL || 'https://us-central1-pruebas-9e15f.cloudfunctions.net/obtenerMetricasPeriodo';
-const AI_ENDPOINT = process.env.NEXT_PUBLIC_BIGQUERY_AI_FUNCTION_URL || 'https://us-central1-pruebas-9e15f.cloudfunctions.net';
+const AI_ENDPOINT = process.env.NEXT_PUBLIC_BIGQUERY_FUNCTION_URL || 'https://us-central1-pruebas-9e15f.cloudfunctions.net/obtenerMetricasPeriodo';
 
 export async function getBigQueryAnalytics(inicio: string, fin: string): Promise<BigQueryAnalyticsResult> {
   if (!ENDPOINT) {
@@ -81,7 +81,6 @@ export async function getBigQueryAIAnalytics(inicio: string, fin: string, option
   
   // Construye la URL de forma segura sin usar 'window'
   const endpointUrl = new URL(AI_ENDPOINT);
-  endpointUrl.pathname += '/ai';
   endpointUrl.search = queryParams.toString();
 
   const url = endpointUrl.toString();

@@ -115,7 +115,7 @@ const AnalisisIABigQuery = () => {
               type="date"
               value={fechaInicio}
               onChange={(e) => setFechaInicio(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 bg-gray-50 text-gray-800"
             />
           </div>
           <div>
@@ -126,7 +126,7 @@ const AnalisisIABigQuery = () => {
               type="date"
               value={fechaFin}
               onChange={(e) => setFechaFin(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 bg-gray-50 text-gray-800"
             />
           </div>
           <div>
@@ -139,7 +139,7 @@ const AnalisisIABigQuery = () => {
                 setTipoAnalisis(e.target.value);
                 setMostrarPromptPersonalizado(e.target.value === 'personalizado');
               }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 bg-gray-50 text-gray-800"
             >
               {tiposAnalisis.map(tipo => (
                 <option key={tipo.valor} value={tipo.valor}>
