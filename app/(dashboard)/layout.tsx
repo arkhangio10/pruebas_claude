@@ -16,7 +16,6 @@ function Sidebar() {
     { label:'Trabajadores', href:'/trabajadores' },
     { label:'Reportes', href:'/reportes' },
     { label:'IA', href:'/ia' },
-    { label:'Consultas', href:'/consultas' },
     { label:'Gráfica', href:'/grafica' },
   ];
   return (

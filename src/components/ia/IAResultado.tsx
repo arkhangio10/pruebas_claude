@@ -4,12 +4,12 @@ import { useIA } from '@/context/IAContext';
 
 // Iconos simulados con caracteres
 const IconTendencias = {
-  aumentando: '',
-  disminuyendo: '',
-  estable: '',
-  cr�tico: '',
-  mejorando: '',
-  default: '',
+  aumentando: '📈',
+  disminuyendo: '📉',
+  estable: '📊',
+  crítico: '⚠️',
+  mejorando: '✅',
+  default: '❔',
 };
 
 const IAResultado: React.FC = () => {
@@ -37,7 +37,7 @@ const IAResultado: React.FC = () => {
     return (
       <div className="bg-gray-50 p-4 rounded-md text-center">
         <p className="text-gray-500">
-          No hay an�lisis disponible. Utiliza las opciones anteriores para generar un an�lisis de IA.
+          No hay análisis disponible. Utiliza las opciones anteriores para generar un análisis de IA.
         </p>
       </div>
     );
@@ -51,7 +51,7 @@ const IAResultado: React.FC = () => {
     <div className="bg-white border border-gray-200 rounded-lg shadow-sm">
       <div className="p-5">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold">Resultado del An�lisis</h3>
+          <h3 className="text-lg font-semibold">Resultado del Análisis</h3>
           <span className="text-sm bg-blue-50 text-blue-700 px-2 py-1 rounded">
             Actualizado: {new Date(analytics.timestamp).toLocaleString()}
           </span>
@@ -73,7 +73,7 @@ const IAResultado: React.FC = () => {
           </div>
         </div>
 
-        {/* Tabs de navegaci�n */}
+        {/* Tabs de navegación */}
         <div className="border-b border-gray-200 mb-4">
           <div className="flex space-x-4">
             <button
@@ -109,7 +109,7 @@ const IAResultado: React.FC = () => {
           </div>
         </div>
 
-        {/* Contenido de las pesta�as */}
+        {/* Contenido de las pestañas */}
         <div className="p-4">
           {activeTab === 'hallazgos' && (
             <div>
@@ -120,7 +120,7 @@ const IAResultado: React.FC = () => {
                   ))}
                 </ul>
               ) : (
-                <p className="text-gray-500">No se encontraron hallazgos clave en el an�lisis.</p>
+                <p className="text-gray-500">No se encontraron hallazgos clave en el análisis.</p>
               )}
             </div>
           )}
@@ -134,7 +134,7 @@ const IAResultado: React.FC = () => {
                   ))}
                 </ul>
               ) : (
-                <p className="text-gray-500">No se encontraron recomendaciones en el an�lisis.</p>
+                <p className="text-gray-500">No se encontraron recomendaciones en el análisis.</p>
               )}
             </div>
           )}
@@ -160,7 +160,7 @@ const IAResultado: React.FC = () => {
                   )}
                 </>
               ) : (
-                <p className="text-gray-500">No hay texto completo disponible para este an�lisis.</p>
+                <p className="text-gray-500">No hay texto completo disponible para este análisis.</p>
               )}
             </div>
           )}

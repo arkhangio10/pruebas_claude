@@ -84,10 +84,9 @@ interface Props {
   reporte?: ReporteDetalleData;
   actividades?: DetalleActividad[];
   manoObra?: DetalleMO[];
-  onReprocesar?: (id: string) => void;
 }
 
-const ReporteDetalleModal: React.FC<Props> = ({ open, onClose, reporte, actividades = [], manoObra = [], onReprocesar }) => {
+const ReporteDetalleModal: React.FC<Props> = ({ open, onClose, reporte, actividades = [], manoObra = [] }) => {
   if (!open || !reporte) return null;
 
   const fmtMoney = (n?: number) => (n ?? 0).toLocaleString('es-PE', { style: 'currency', currency: 'PEN' });
@@ -288,12 +287,6 @@ const ReporteDetalleModal: React.FC<Props> = ({ open, onClose, reporte, activida
                 Corregir Reporte
               </button>
             )}
-            <button
-              className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-1.5 rounded"
-              onClick={() => onReprocesar && onReprocesar(reporte.id)}
-            >
-              Reprocesar Reporte
-            </button>
             <button className="bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm px-3 py-1.5 rounded" onClick={onClose}>
               Cerrar
             </button>

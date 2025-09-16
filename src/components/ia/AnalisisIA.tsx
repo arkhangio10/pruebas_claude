@@ -21,7 +21,7 @@ interface ResultadoAnalisis {
   text?: string;
 }
 
-const AnalisisIABigQuery = () => {
+const AnalisisIA = () => {
   const [loading, setLoading] = useState(false);
   const [resultado, setResultado] = useState<ResultadoAnalisis | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -160,7 +160,7 @@ const AnalisisIABigQuery = () => {
               value={promptPersonalizado}
               onChange={(e) => setPromptPersonalizado(e.target.value)}
               placeholder="Escribe tu consulta específica sobre los datos del proyecto..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md h-32 focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md h-32 focus:ring-2 focus:ring-blue-500 bg-gray-50 text-gray-800"
             />
           </div>
         )}
@@ -331,4 +331,4 @@ const AnalisisIABigQuery = () => {
   );
 };
 
-export default AnalisisIABigQuery;
+export default AnalisisIA;

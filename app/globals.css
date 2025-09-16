@@ -19,3 +19,8 @@ main { padding: 16px; }
 table { width: 100%; border-collapse: collapse; }
 th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; }
 
+/* Cambiar el color del icono del calendario en los inputs de fecha */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.2);
+}
+
