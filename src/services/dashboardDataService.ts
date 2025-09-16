@@ -1,8 +1,8 @@
 import { db } from '@/lib/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
-import { FiltrosDashboard, DashboardData } from '@/context/DashboardContext';
-import { getBigQueryAnalytics } from '@/services/bigQueryClient';
+import { getBigQueryAIAnalytics } from './bigQueryClient';
 import { computeKpis } from '@/utils/kpis';
+import { DashboardData, FiltrosDashboard } from '@/utils/types';
 
 // ------------------------------------------------------------
 // Utilidades internas para fechas
@@ -36,9 +36,9 @@ async function getResumenFirebase(filtros: FiltrosDashboard): Promise<DashboardD
     fechaInicio: filtros.fechaInicio,
     fechaFin: filtros.fechaFin,
     tipoVista: filtros.tipoVista || 'diario',
-  v: '2',
-  debug: '1',
-  raw: '1'
+    v: '2',
+    debug: '1',
+    raw: '1'
   });
   const res = await fetch(`/api/resumen?${params.toString()}`, { cache: 'no-store' });
   if (!res.ok) {
@@ -58,30 +58,13 @@ async function getResumenFirebase(filtros: FiltrosDashboard): Promise<DashboardD
   return { kpis: json.kpis || {}, reportes: [], actividades: acts, trabajadores: [] };
 }
 
-export async function getKpisAndReportes(filtros: FiltrosDashboard): Promise<DashboardData> {
-  if (filtros.modoDatos === 'bigquery') {
-    const big = await getBigQueryAnalytics(filtros.fechaInicio, filtros.fechaFin);
-    const kpis = computeKpis(big.reportes || []);
-    return { kpis, reportes: big.reportes || [], actividades: big.actividades || [], trabajadores: big.trabajadores || [] };
-  }
+const CACHE_VERSION = '1.0';
 
-  // Nuevo modo firebase usando colecciones resumen
-  try {
-    return await getResumenFirebase(filtros);
-  } catch (e) {
-    if (typeof window !== 'undefined') {
-      console.error('[DashboardData] Error API resumen -> usando fallback legacy:', e);
-    }
-    const q = query(collection(db, 'reportes'), where('fecha', '>=', filtros.fechaInicio), where('fecha', '<=', filtros.fechaFin));
-    const snaps = await getDocs(q);
-    const reportes: any[] = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
-    const kpis = computeKpis(reportes);
-    const actividades: any[] = [];
-    reportes.forEach(r => { (r.actividades || []).forEach((a: any) => actividades.push(a)); });
-    const trabajadores: any[] = [];
-    actividades.forEach(a => { (a.trabajadores || []).forEach((t: string) => trabajadores.push({ nombre: t })); });
-    // Añadir placeholder costoExpediente en fallback
-    const actsConCosto = actividades.map(a => ({ ...a, costoExpediente: a.costoExpediente ?? ((a.total ?? (a.metradoE||0 * a.precioUnitario||0)) * 0.1) }));
-    return { kpis, reportes, actividades: actsConCosto, trabajadores };
-  }
+export async function getKpisAndReportes(
+  filtros: FiltrosDashboard
+): Promise<DashboardData> {
+  const cacheKey = `dashboard:${CACHE_VERSION}:${filtros.tipoVista}:${filtros.fechaInicio}:${filtros.fechaFin}:${filtros.modoDatos}`;
+
+  // Por ahora, usar siempre Firebase hasta que se corrija el endpoint de BigQuery
+  return await getResumenFirebase(filtros);
 }

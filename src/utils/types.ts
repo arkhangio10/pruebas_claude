@@ -36,3 +36,44 @@ export interface AIAnalysisResult {
   dataTimestamp: string;
   queryType: string;
 }
+
+export interface Kpis {
+  costoTotal?: number;
+  valorTotal?: number;
+  productividadPromedio?: number;
+  totalHoras?: number;
+  ganancia?: number;
+  actividadMasProductiva?: { nombre: string; productividad: number };
+  actividadMenosProductiva?: { nombre: string; productividad: number };
+}
+
+export interface DashboardData {
+  kpis: Kpis;
+  reportes: Reporte[];
+  actividades?: any[];
+  trabajadores?: any[];
+}
+
+export interface FiltrosDashboard {
+  fechaInicio: string;
+  fechaFin: string;
+  modoDatos: 'firebase' | 'bigquery';
+  tipoVista?: 'diario' | 'semanal' | 'mensual';
+}
+
+export interface Actividad {
+  nombre: string;
+  unidad: string;
+  cantidad: number;
+  costoUnitario: number;
+  costoTotal: number;
+  productividad?: number;
+}
+
+export interface Reporte {
+  id: string;
+  fecha: string;
+  actividades: Actividad[];
+  costoTotal: number;
+  productividad?: number;
+}
